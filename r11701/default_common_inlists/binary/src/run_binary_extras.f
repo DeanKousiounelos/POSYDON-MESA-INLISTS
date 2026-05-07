@@ -1312,12 +1312,14 @@
 
       subroutine my_nova_flag(binary_id, nova_flag, ierr)
          ! nova_flag = 1 if system is in nova regime (Mdot below stable-burning threshold), else 0.
-         ! Threshold: log10(Mdot_crit) = log10(3.066e-7 * (Mwd - 0.5357))  [Wang+2018 stability line]
+         ! Threshold (Wang+2018 eq. 2):
+         !   Mdot_st = 2.93e-7 * (-Mwd^3 + 4.41*Mwd^2 - 3.38*Mwd + 0.84)  [Msun/yr]
+         ! Nova occurs when accretion rate falls below Mdot_st.
          integer, intent(in) :: binary_id
          real(dp), intent(out) :: nova_flag
          integer, intent(out) :: ierr
          type (binary_info), pointer :: b
-         real(dp) :: m_wd, log10mdot, log10_thresh
+         real(dp) :: m_wd, mdot_acc, mdot_st
 
          ierr       = 0
          nova_flag  = 0d0
@@ -1328,13 +1330,11 @@
             return
          end if
 
-         m_wd      = b% m(b% point_mass_i) / Msun
-         log10mdot = log10_cr(abs(b% mtransfer_rate) * secyer / Msun)
+         m_wd     = b% m(b% point_mass_i) / Msun
+         mdot_acc = abs(b% mtransfer_rate) * secyer / Msun
 
-         if (m_wd > 0.5357d0) then
-            log10_thresh = log10_cr(3.066d-7 * (m_wd - 0.5357d0))
-            if (log10mdot < log10_thresh) nova_flag = 1d0
-         end if
+         mdot_st = 2.93d-7 * (-pow3(m_wd) + 4.41d0*pow2(m_wd) - 3.38d0*m_wd + 0.84d0)
+         if (mdot_st > 0d0 .and. mdot_acc < mdot_st) nova_flag = 1d0
 
       end subroutine my_nova_flag
 
@@ -2180,28 +2180,6 @@
          end do   
 
       end subroutine calc_tau_convective
-
-      ! Extra binary history columns (total: 18)
-      ! Col | Name            | Subroutine          | Units / Notes
-      ! ----+-----------------+---------------------+-------------------------------
-      !   1 | trap_radius     | (inline)            | Rsun
-      !   2 | acc_radius      | (inline)            | cm
-      !   3 | t_sync_rad_1    | (inline)            | s
-      !   4 | t_sync_conv_1   | (inline)            | s
-      !   5 | t_sync_rad_2    | (inline)            | s
-      !   6 | t_sync_conv_2   | (inline)            | s
-      !   7 | star_mb_jdot_1  | (inline)            | g cm^2 s^-2
-      !   8 | star_mb_jdot_2  | (inline)            | g cm^2 s^-2
-      !   9 | conv_tau_sec_1  | calc_tau_convective | s
-      !  10 | rossby_number_1 | (inline)            | dimensionless
-      !  11 | n_complexity_1  | (inline)            | dimensionless
-      !  12 | conv_tau_sec_2  | calc_tau_convective | s
-      !  13 | rossby_number_2 | (inline)            | dimensionless
-      !  14 | n_complexity_2  | (inline)            | dimensionless
-      !  15 | nova_flag       | my_nova_flag        | 0=stable burning, 1=nova regime
-      !  16 | dMH             | my_dMH              | Msun (H ignition mass)
-      !  17 | eta_accretion   | my_eta_accretion    | dimensionless [0,1]
-      !  18 | m_loss_nova     | my_m_loss           | Msun (mass ejected per nova cycle)
 
       integer function how_many_extra_binary_history_columns(binary_id)
          use binary_def, only: binary_info
