@@ -47,13 +47,14 @@
             return
          end if
 
-         ! Set these function pinters to point to the functions you wish to use in
+         ! Set these function pointers to point to the functions you wish to use in
          ! your run_binary_extras. Any which are not set, default to a null_ version
          ! which does nothing.
          b% how_many_extra_binary_history_columns => how_many_extra_binary_history_columns
          b% data_for_extra_binary_history_columns => data_for_extra_binary_history_columns
 
          b% extras_binary_startup=> extras_binary_startup
+         b% extras_binary_start_step=> extras_binary_start_step
          b% extras_binary_check_model=> extras_binary_check_model
          b% extras_binary_finish_step => extras_binary_finish_step
          b% extras_binary_after_evolve=> extras_binary_after_evolve
@@ -64,7 +65,7 @@
 
          b% other_sync_spin_to_orbit => my_sync_spin_to_orbit
          b% other_tsync => my_tsync
-         b% other_mdot_edd => my_mdot_edd
+         b% other_mdot_edd => my_mdot_edd !pointer 
          b% other_rlo_mdot => my_rlo_mdot
          
          b% other_jdot_mb => mb_torque_selector
@@ -831,6 +832,7 @@
          type (binary_info), pointer :: b
          ierr = 0
          call binary_ptr(binary_id, b, ierr)
+         !call my_nova_flag()
          if (ierr /= 0) then
             write(*,*) 'failed in binary_ptr'
             return
@@ -871,38 +873,52 @@
                   /(clight*0.2d0*(1d0+b% s_donor% surface_h1)*mdot_edd_eta)
          !b% s1% x_ctrl(1) used to adjust the Eddington limit in inlist1
          mdot_edd = mdot_edd * b% s1% x_ctrl(1)
+      !if (my_nova_flag() = 1) then 
+         !call my_dmH
+         !call my_accretion_efficiency
+         !if (my_dmH = ____) then
+            !call my_m_loss
+         
       end subroutine my_mdot_edd
 
+!!**********************************************!!
+
+      !!Here begins Novae Perscriptions from Dean Kousiounelos and Seth Gossage
       !!my_m_loss
       subroutine my_m_loss(binary_id, mloss, ierr)
          integer, intent(in) :: binary_id
          real(dp), intent(out) :: mloss !mass ejected per nova cycle [Msun]
          integer, intent(out) :: ierr
          real(dp) :: dMH, eta
+         type (binary_info), pointer :: b
 
          ierr = 0
          mloss = 0d0
 
          call binary_ptr(binary_id, b, ierr)
-         if (ierr /=0) then 
-         write(*,*), 'failed in binary_ptr in my_m_loss'
+         if (ierr /=0) then
+         write(*,*) 'failed in binary_ptr in my_m_loss'
          return
+      end if
 
-         call my_dMH(binary_id, dMHm ierr) !ignition mass
+         call my_dMH(binary_id, dMH, ierr) !ignition mass
          if (ierr /= 0) return
 
          call my_eta_accretion(binary_id, eta, ierr) !retention efficiency
-         if (ierr /= 0) return 
+         if (ierr /= 0) return
 
-         mloss = dmH * (1d0 - eta) !mass ejected per nova cycle
+         ! Ejected mass per nova: Delta_Mej = Delta_Mig * (1 - eta_H).
+         mloss = dMH * (1d0 - eta) !mass ejected per nova cycle
 
       end subroutine my_m_loss
 
-      
+
 
       !my_eta_accretion
       subroutine my_eta_accretion(binary_id, etaH, ierr)
          ! Returns hydrogen accretion efficiency eta_H based on Wang+2018 fits.
+         ! Uses raw mtransfer_rate (no xfer_fraction) — the total H flux onto
+         ! the WD surface sets eta.
 
          ! Inputs: WD mass (Msun), log10 accretion rate (Msun/yr). Output: eta_H in [0,1].
          integer, intent(in) :: binary_id
@@ -1188,11 +1204,17 @@
 
          if (fithighereta > 1d0) fithighereta = 1d0
          if (fitlowereta  > 1d0) fitlowereta  = 1d0
-
+!        applying a floor to 0 mass_transfer
+         if (fithighereta < 0d0) fithighereta = 0d0
+         if (fitlowereta  < 0d0) fitlowereta  = 0d0
          ! Linear interp: equivalent to np.interp(m_wd, [M_WDlower, M_WDhigher], [fitlowereta, fithighereta])
          etaH = fitlowereta + (m_wd - M_WDlower) * (fithighereta - fitlowereta) / (M_WDhigher - M_WDlower)
 
+         if (etaH < 0d0) etaH = 0d0
+         if (etaH > 1d0) etaH = 1d0
       end subroutine my_eta_accretion
+
+!**********************************************!
 
       subroutine my_dMH(binary_id, dMH, ierr)
       !from formulae in Kemp et al. 2021 fitted to data from Kato et al. 2014
@@ -1200,7 +1222,6 @@
          real(dp), intent(out) :: dMH !ignition mass [Msun]
          integer, intent(out) :: ierr
          type (binary_info), pointer :: b
-         real(dp) :: m_wd, log10mdot
          real(dp) :: m_wd, log10mdot
          real(dp) :: M_WD_eneg4, M_WD_6eneg5, M_WD_3eneg5, M_WD_1p7eneg5
          real(dp) :: M_WD_1eneg5, M_WD_6eneg6, M_WD_3eneg6, M_WD_1eneg6
@@ -1220,18 +1241,20 @@
          M_WD_1eneg6   = 0d0
          M_WD_3eneg7   = 0d0
 
-         
-         call binary_ptr(binary_id, b, ierr)
-         if (ierr /=0) then 
-            write(*,*), 'failed in binary_ptr in my_dMH'
-            return
-        
-         end if
-         
-         m_wd = b% m(b% point_mass_i) / Msun
-         log10mdot = log10_cr(abs(b% mtransfer_rate) * secyer / Msun) !convert to log10
 
-         if(log10Mdot >= -7.7d0) then 
+         call binary_ptr(binary_id, b, ierr)
+         if (ierr /=0) then
+            write(*,*) 'failed in binary_ptr in my_dMH'
+            return
+
+         end if
+
+         m_wd = b% m(b% point_mass_i) / Msun
+         ! Floor Mdot at 1e-12 Msun/yr before taking log10, matching the
+         ! reference (Kemp/binary_c KEMP_NOVAE) fit's minimum trusted range.
+         log10mdot = log10_cr(max(1d-12, abs(b% mtransfer_rate) * secyer / Msun)) !convert to log10
+
+         if(log10Mdot >= -7.7d0) then
             M_WD_eneg4    = -0.01136821d0*pow2(log10Mdot) - 0.28779422d0*log10Mdot - 0.87275137d0
             M_WD_6eneg5   = -0.00223874d0*pow3(log10Mdot) - 0.07980979d0*pow2(log10Mdot) - 0.95727391d0*log10Mdot - 2.88226600d0
             M_WD_3eneg5   = -0.02513162d0*pow2(log10Mdot) - 0.51596425d0*log10Mdot - 1.55913869d0
@@ -1252,7 +1275,7 @@
             M_WD_3eneg6   = -0.00162294d0*pow3(log10Mdot) - 0.06120773d0*pow2(log10Mdot) - 0.7142422d0*log10Mdot - 1.34053269d0
             M_WD_1eneg6   = -0.00284309d0*pow3(log10Mdot) - 0.08134364d0*pow2(log10Mdot) - 0.7792520d0*log10Mdot - 1.13067755d0
             M_WD_3eneg7   = -0.0062d0 * log10Mdot + 1.3336d0
-    
+
          else if(log10Mdot < -9) then
             M_WD_eneg4    =-0.0225d0 * log10Mdot + 0.5856d0
             M_WD_6eneg5   =-0.0246d0 * log10Mdot + 0.6755d0
@@ -1263,63 +1286,108 @@
             M_WD_3eneg6   =-0.0092d0 * log10Mdot + 1.2307d0
             M_WD_1eneg6   =-0.0047d0 * log10Mdot + 1.3239d0
             M_WD_3eneg7   =-0.0062d0 * log10Mdot + 1.3336d0
+      end if
 
+         ! Reference (Kemp/binary_c KEMP_NOVAE) uses a dedicated branch above
+         ! log10Mdot = -7.2 for the 1e-4, 3e-5, and 6e-5 Msun ignition-mass
+         ! contours only; the other six contours share the same formula across
+         ! -7.7 .. -7.2 and above, so they are left as computed above.
+         if (log10Mdot >= -7.2d0) then
+            M_WD_eneg4  = -0.04596643d0*pow2(log10Mdot) - 0.77067908d0*log10Mdot - 2.54725295d0
+            M_WD_3eneg5 = -0.05736748d0*pow2(log10Mdot) - 0.94076143d0*log10Mdot - 2.94511325d0
+            M_WD_6eneg5 = -0.05119815d0*pow2(log10Mdot) - 0.84433509d0*log10Mdot - 2.70816224d0
+         end if
 
          if (m_wd <= M_WD_6eneg5 .and. m_wd >= M_WD_eneg4) then
-             write(*,*), 'dMH is between 6e-5 and e-4 Msun'
+             write(*,*) 'dMH is between 6e-5 and e-4 Msun'
             dMH = 1d-4 + (m_wd - M_WD_eneg4)*(6d-5 - 1d-4)/(M_WD_6eneg5 - M_WD_eneg4)
-          
+
          else if (m_wd <= M_WD_3eneg5 .and. m_wd >= M_WD_6eneg5) then
-             write(*,*), 'M_WD is between 3e-5 and 6e-5 Msun'
-            dMH = 6de-5 + (m_wd - M_WD_3eneg5)*(3e-5 - 6e-5)/(M_WD_3eneg5-M_WD_6eneg5)
-        
+             write(*,*) 'M_WD is between 3e-5 and 6e-5 Msun'
+            dMH = 6d-5 + (m_wd - M_WD_6eneg5)*(3d-5 - 6d-5)/(M_WD_3eneg5 - M_WD_6eneg5)
+
          else if (m_wd <= M_WD_1p7eneg5 .and. m_wd >= M_WD_3eneg5) then
-             write(*,*), 'M_WD is between 1.7e-5 and 3e-5 Msun'
+             write(*,*) 'M_WD is between 1.7e-5 and 3e-5 Msun'
             dMH = 3d-5 + (m_wd - M_WD_3eneg5)*(1.7d-5 - 3d-5)/(M_WD_1p7eneg5 - M_WD_3eneg5)
- 
+
          else if (m_wd <= M_WD_1eneg5 .and. m_wd >= M_WD_1p7eneg5) then
-             write(*,*), 'M_WD is between 1e-5 and 1.7e-5 Msun'
+             write(*,*) 'M_WD is between 1e-5 and 1.7e-5 Msun'
             dMH = 1.7d-5 + (m_wd - M_WD_1p7eneg5)*(1d-5 - 1.7d-5)/(M_WD_1eneg5 - M_WD_1p7eneg5)
 
          else if (m_wd <= M_WD_6eneg6 .and. m_wd >= M_WD_1eneg5) then
-             write(*,*), 'M_WD is between 6e-6 and 1e-5 Msun'
+             write(*,*) 'M_WD is between 6e-6 and 1e-5 Msun'
             dMH = 1d-5 + (m_wd - M_WD_1eneg5)*(6d-6 - 1d-5)/(M_WD_6eneg6 - M_WD_1eneg5)
-            
+
          else if (m_wd <= M_WD_3eneg6 .and. m_wd >= M_WD_6eneg6) then
-             write(*,*), 'M_WD is betweenn 3e-6 and 6e-6 Msun'
+             write(*,*) 'M_WD is betweenn 3e-6 and 6e-6 Msun'
             dMH = 6d-6 + (m_wd - M_WD_6eneg6)*(3d-6 - 6d-6)/(M_WD_3eneg6 - M_WD_6eneg6)
 
          else if (m_wd <= M_WD_1eneg6 .and. m_wd >= M_WD_3eneg6) then
-             write(*,*), 'M_WD is between 1e-6 and 3e-6 Msun'
+             write(*,*) 'M_WD is between 1e-6 and 3e-6 Msun'
             dMH = 3d-6 + (m_wd - M_WD_3eneg6)*(1d-6 - 3d-6)/(M_WD_1eneg6 - M_WD_3eneg6)
 
          else if (m_wd <= M_WD_3eneg7 .and. m_wd >= M_WD_1eneg6) then
-             write(*,*), 'M_WD is between 3e-7 and 1e-6 Msun'
+             write(*,*) 'M_WD is between 3e-7 and 1e-6 Msun'
             dMH = 1d-6 + (m_wd - M_WD_1eneg6)*(3d-7 - 1d-6)/(M_WD_3eneg7 - M_WD_1eneg6)
 
          else if (m_wd < M_WD_eneg4) then
-             write(*,*), 'M_WD is between 1e-7 and 4e-6 Msun'
+             write(*,*) 'M_WD is between 1e-7 and 4e-6 Msun'
             dMH = 4d-4 + (m_wd - 0.2d0)*(1d-4 - 4d-4)/(M_WD_eneg4 - 0.2d0)
 
          else if (m_wd > M_WD_3eneg7) then
-             write(*,*), 'M_WD is between 5e-8 and 3e-7 Msun'
+             write(*,*) 'M_WD is between 5e-8 and 3e-7 Msun'
             dMH = 3d-7 + (m_wd - M_WD_3eneg7)*(M_Hig_chand - 3d-7)/(M_WD_Chand - M_WD_3eneg7)
-     
-         end if 
+
+      end if
 
       end subroutine my_dMH
 
+!**************************************************!
+
+      subroutine my_t_recurrence(binary_id, t_rec, ierr)
+      !calculates the recurrence time between novae given ignition mass and mdot
+      !note that this recurrence time is only calculated when the accreted mass
+      !is greater than the ignition mass at the start of the MESA step. If the step
+      !is much longer than the recurrence time, then one canot get information about
+      !the other nova which would've occured during that timestep.
+         integer, intent(in) :: binary_id
+         real(dp), intent(out) :: t_rec
+         integer, intent(out) :: ierr
+         real(dp) :: dMH, mdot_msun_yr
+         type (binary_info), pointer :: b
+
+         ierr  = 0
+         t_rec = 0d0
+
+         call binary_ptr(binary_id, b, ierr)
+         if (ierr /= 0) then
+            write(*,*) 'failed in binary_ptr in my_t_recurrence'
+            return
+         end if
+
+         if (b% mtransfer_rate == 0d0) return
+
+         mdot_msun_yr = abs(b% mtransfer_rate) * secyer / Msun
+         call my_dMH(binary_id, dMH, ierr)
+         if (ierr /= 0) return
+
+         ! Recurrence time: tau_rec = Delta_Mig / Mdot.
+         t_rec = dMH / mdot_msun_yr
+
+      end subroutine my_t_recurrence
+
+!*****************************************************!
 
       subroutine my_nova_flag(binary_id, nova_flag, ierr)
          ! nova_flag = 1 if system is in nova regime (Mdot below stable-burning threshold), else 0.
          ! Threshold (Wang+2018 eq. 2):
-         !   Mdot_st = 2.93e-7 * (-Mwd^3 + 4.41*Mwd^2 - 3.38*Mwd + 0.84)  [Msun/yr]
+         ! Mdot_st = 2.93e-7 * (-Mwd^3 + 4.41*Mwd^2 - 3.38*Mwd + 0.84)  [Msun/yr]
          ! Nova occurs when accretion rate falls below Mdot_st.
          integer, intent(in) :: binary_id
          real(dp), intent(out) :: nova_flag
          integer, intent(out) :: ierr
          type (binary_info), pointer :: b
-         real(dp) :: m_wd, mdot_acc, mdot_st
+         real(dp) :: m_wd, mdot, mdot_st
 
          ierr       = 0
          nova_flag  = 0d0
@@ -1330,15 +1398,18 @@
             return
          end if
 
-         m_wd     = b% m(b% point_mass_i) / Msun
-         mdot_acc = abs(b% mtransfer_rate) * secyer / Msun
+         m_wd  = b% m(b% point_mass_i) / Msun
+         mdot  = abs(b% mtransfer_rate) * secyer / Msun
 
+         ! Nova regime requires Mdot < Mdot_st; above this threshold steady H-burning retains all mass with eta_H = 1.
          mdot_st = 2.93d-7 * (-pow3(m_wd) + 4.41d0*pow2(m_wd) - 3.38d0*m_wd + 0.84d0)
-         if (mdot_st > 0d0 .and. mdot_acc < mdot_st) nova_flag = 1d0
+         !Here we apply a lower limit of mdot at 1e-12
+         if (mdot_st > 0d0 .and. mdot > 1d-12 .and. mdot < mdot_st) nova_flag = 1d0
 
       end subroutine my_nova_flag
 
-
+!****************************************************!
+      
       subroutine my_rlo_mdot(binary_id, mdot, ierr) ! Adapted from a routine kindly provided by Anastasios Fragkos
          integer, intent(in) :: binary_id
          real(dp), intent(out) :: mdot
@@ -2199,9 +2270,9 @@
          integer:: i_don, i_acc
          real(dp) :: beta, trap_rad, mdot_edd, accretor_radius, MOI, prot
          real(dp) :: tau_convective, Ro, n_complexity, a_constant, b_constant
-         real(dp) :: dMH_val, etaH_val, mloss_val, nova_flag_val
+         real(dp) :: mdot_msun_yr, m_wd, log10mdot, t_rec, nova_flag, dt_yr, ratio
 
-          ierr = 0
+         ierr = 0
 
          call binary_ptr(binary_id, b, ierr)
          if (ierr /= 0) then ! failure in  binary_ptr
@@ -2337,26 +2408,133 @@
 		
          !write(*,*) "synchr timescales: ", b% s1% xtra1, b% s1% xtra2, b% s2% xtra1, b% s2% xtra2
 
-         call my_nova_flag(binary_id, nova_flag_val, ierr)
-         if (ierr /= 0) nova_flag_val = -1d0
-         names(15) = 'nova_flag'
-         vals(15)  = nova_flag_val
+!**************************!extra columns from novae physics***********!
+         names(15) = 'eta_retention'
+         vals(15)  = b% s_donor% xtra3
+         names(16) = 'm_ignition'
+         vals(16)  = b% s_donor% xtra4
+         names(17) = 't_recurrence'
+         names(18) = 'nova_validity'
+         names(19) = 'mass_transfer_beta'
+         names(20) = 'nova_flag'
+         names(21) = 'n_novae'
+         names(22) = 'ratio_trec_dt'
+         names(23)  = 'nova_mass_lost'
+         vals(23)   = b% s_donor% xtra5
+         names(24) = 'wd_mass_ref_nova'
+         vals(24)  = b% s_donor% xtra6 / Msun  ! WD mass [Msun] at last nova reset
+         names(25) = 'ejected_mass_cum'
+         vals(25)  = b% s_donor% xtra8
+         names(26) = 'accreted_mass_cum'
+         vals(26)  = b% s_donor% xtra9
+         names(27) = 'ejected_fraction'
 
-         call my_dMH(binary_id, dMH_val, ierr)
-         if (ierr /= 0) dMH_val = -1d0
-         names(16) = 'dMH'
-         vals(16)  = dMH_val
+!1. eta_retention
+  ! Source: xtra1
+  ! H retention efficiency (eta) from the Wang+2018 fit, used this step.
+  ! Set to 1.0 during stable burning (fully efficient, conservative).
 
-         call my_eta_accretion(binary_id, etaH_val, ierr)
-         if (ierr /= 0) etaH_val = -1d0
-         names(17) = 'eta_accretion'
-         vals(17)  = etaH_val
+!2. m_ignition
+ !  Source: xtra2
+  ! Ignition mass Delta_M_ig [Msun] from my_dMH (Kemp et al. 2021 fit).
+   !0 during stable burning.
 
-         call my_m_loss(binary_id, mloss_val, ierr)
-         if (ierr /= 0) mloss_val = -1d0
-         names(18) = 'm_loss_nova'
-         vals(18)  = mloss_val
+!3. t_recurrence
+ !  Source: computed live each step
+  ! Nova recurrence time tau_rec = Delta_M_ig / Mdot [yr].
+   !0 if not in nova regime.
 
+!4. nova_validity
+ !  Source: computed live each step
+  ! 1 if WD mass and Mdot fall inside the trusted fit range
+   !(0.6-1.35 Msun, log10(Mdot) >= -11), else 0.
+
+!5. mass_transfer_beta
+ !  Source: b% mass_transfer_beta
+  ! Non-conservative mass-transfer fraction actually used this step,
+   != 1 - eta. 0 in stable burning or when accumulation hasn't yet
+   !reached the ignition mass.
+
+!6. nova_flag
+ !  Source: computed live (my_nova_flag)
+  ! 1 if the system is in the nova regime (Mdot < Mdot_st) this step,
+   !else 0.
+
+!7. n_novae
+ !  Source: xtra5
+  ! Number of novae counted this step (only nonzero when beta > 0
+   !this step).
+
+!8. ratio_trec_dt
+ !  Source: computed live each step
+  ! tau_rec / dt - how many recurrence timescales fit inside the
+   !current step (diagnostic for step-size adequacy).
+
+!9. nova_mass_lost
+ !  Source: xtra3
+  ! Mass ejected this step [Msun] = beta * |Mdot| * dt.
+
+!10. wd_mass_ref_nova
+ !   Source: xtra4
+  !  WD mass [Msun] at the last nova reset - bookkeeping reference used
+   ! to gate when the next nova fires (m_accreted = m_wd - xtra4). Not
+    ! fed into the ignition-mass/efficiency physics itself, which uses
+    ! the live b% m(b% point_mass_i) instead.
+
+!11. ejected_mass_cum
+ !   Source: xtra6
+  !  Cumulative nova-ejected mass [Msun] over the whole run.
+
+!12. accreted_mass_cum
+ !   Source: xtra7
+  !  Cumulative mass retained/accreted by the WD [Msun] over the whole
+   ! run.
+
+!13. ejected_fraction
+ !   Source: computed live each step
+  !  100 * ejected_mass_cum / (ejected_mass_cum + accreted_mass_cum) -
+   ! running percentage of transferred mass lost to novae.
+
+!******************************************************************!
+
+         if (b% s_donor% xtra9 + b% s_donor% xtra8 > 0d0) then
+            vals(27) = b% s_donor% xtra8 / (b% s_donor% xtra9 + b% s_donor% xtra8) * 100d0
+         else
+            vals(27) = 0d0
+         end if
+         if (b% mtransfer_rate /= 0d0) then
+            mdot_msun_yr = abs(b% mtransfer_rate) * secyer / Msun
+            m_wd         = b% m(b% point_mass_i) / Msun
+            log10mdot    = log10_cr(mdot_msun_yr)
+            if (m_wd >= 0.6d0 .and. m_wd <= 1.35d0 .and. log10mdot >= -11d0) then
+               vals(18) = 1d0
+            else
+               vals(18) = 0d0
+            end if
+            call my_nova_flag(binary_id, nova_flag, ierr)
+            if (ierr /= 0) return
+            vals(20) = nova_flag
+            if (nova_flag == 1d0) then
+               call my_t_recurrence(binary_id, t_rec, ierr)
+               if (ierr /= 0) return
+               vals(17) = t_rec
+               dt_yr   = b% s_donor% dt / secyer
+               ratio   = t_rec / dt_yr
+               vals(21) = b% s_donor% xtra7
+               vals(22) = ratio
+            else
+               vals(17) = 0d0
+               vals(21) = 0d0
+               vals(22) = 0d0
+            end if
+         else
+            vals(17) = 0d0
+            vals(18) = 0d0
+            vals(20) = 0d0
+            vals(21) = 0d0
+            vals(22) = 0d0
+         end if
+         vals(19) = b% mass_transfer_beta
       end subroutine data_for_extra_binary_history_columns
 
 
@@ -2425,6 +2603,59 @@
 
       end function  extras_binary_startup
 
+!****************************************************************!
+
+      integer function extras_binary_start_step(binary_id,ierr)
+         type (binary_info), pointer :: b
+         integer, intent(in) :: binary_id
+         integer, intent(out) :: ierr
+         real(dp) :: nova_flag, eta, dMH, m_wd, m_accreted, m_total
+
+         extras_binary_start_step = keep_going
+         call binary_ptr(binary_id, b, ierr)
+         if (ierr /= 0) return
+
+         if (b% point_mass_i /= 0 .and. b% mtransfer_rate /= 0d0 .and. &
+            b% m(b% point_mass_i) < 1.44d0 * Msun) then
+
+            call my_nova_flag(binary_id, nova_flag, ierr)
+            if (ierr /= 0) return
+
+            if (nova_flag == 1d0) then
+               ! Historical accumulation on WD since last nova [grams]
+               m_wd       = b% m(b% point_mass_i)
+               m_accreted = m_wd - b% s_donor% xtra6
+
+               call my_dMH(binary_id, dMH, ierr)
+               if (ierr /= 0) return
+
+               ! Gate uses historical + expected accretion this step: novae fire whenever
+               ! the WD will have accumulated >= dMH by end of this timestep, even if
+               ! m_accreted = 0 at the start (as occurs on the step immediately after a nova).
+               ! This prevents spurious zero-beta steps when dt >> tau_rec.
+               m_total = m_accreted + abs(b% mtransfer_rate) * b% s_donor% dt
+
+               if (m_total >= dMH * Msun) then
+                  call my_eta_accretion(binary_id, eta, ierr)
+                  if (ierr /= 0) return
+                  ! Continuous-time average: ejected fraction = 1 - eta.
+                  b% mass_transfer_beta = 1d0 - eta
+                  ! xtra4 reset is deferred to finish_step so beta > 0 is visible in history
+               else
+                  ! Neither historical nor expected accretion reaches dMH; fully conservative.
+                  b% mass_transfer_beta = 0d0
+               end if
+            else
+               ! Stable burning: fully conservative
+               b% mass_transfer_beta = 0d0
+            end if
+
+         end if
+
+      end function  extras_binary_start_step
+
+!***************************************************************!
+
       !Return either rety,backup,keep_going or terminate
       integer function extras_binary_check_model(binary_id)
          type (binary_info), pointer :: b
@@ -2471,10 +2702,11 @@
          integer, intent(in) :: binary_id
          integer:: i_don, i_acc
 	      real(dp) :: r_l2, d_l2
-         integer :: ierr, star_id, i
+         integer :: ierr, star_id, i, n_novae
          real(dp) :: q, mdot_limit_low, mdot_limit_high, &
                      center_h1, center_h1_old, center_he4, center_he4_old, &
-                     rl23,rl2_1,trap_rad, mdot_edd, tau_kh, tau_macc
+                     rl23,rl2_1,trap_rad, mdot_edd, tau_kh, tau_macc, nova_flag, &
+                     etaH, m_ig, t_rec, dt_yr, nova_mass_lost, mass_transferred
          logical :: is_ne_biggest, superthermal_accretion
          real(dp) :: gamma1_integral, integral_norm, Pdm_over_rho
 
@@ -2834,8 +3066,52 @@
 		  
                end if
             end if
-         end if
+!**********************************************************************!        
+!        Nova finish_step
+         if (b% point_mass_i /= 0 .and. b% mtransfer_rate /= 0d0 .and. &
+            b% m(b% point_mass_i) < 1.44d0 * Msun) then
 
+            b% s_donor% xtra5 = 0d0
+            b% s_donor% xtra6 = 0d0
+
+            call my_nova_flag(binary_id, nova_flag, ierr)
+            if (ierr /= 0) return
+
+            if (nova_flag == 1d0) then
+               call my_eta_accretion(binary_id, etaH, ierr)
+               if (ierr /= 0) return
+               call my_dMH(binary_id, m_ig, ierr)
+               if (ierr /= 0) return
+               b% s_donor% xtra3 = etaH
+               b% s_donor% xtra4 = m_ig
+
+               ! n_novae only reported when nova actually fires this step (beta > 0)
+               if (b% mass_transfer_beta > 0d0) then
+                  call my_t_recurrence(binary_id, t_rec, ierr)
+                  if (ierr /= 0) return
+                  dt_yr = b% s_donor% dt / secyer
+                  if (t_rec > 0d0) then
+                     n_novae = max(1, int(dt_yr / t_rec))
+                     b% s_donor% xtra7 = dble(n_novae)
+                  end if
+               end if
+               else
+                  b% s_donor% xtra3 = 1d0  ! stable burning: fully efficient
+                  b% s_donor% xtra4 = 0d0
+               end if
+
+               ! Accumulate mass budget [Msun] — applies in nova and stable-burning regimes
+               mass_transferred  = abs(b% mtransfer_rate) * b% s_donor% dt / Msun
+               nova_mass_lost    = b% mass_transfer_beta * mass_transferred
+               b% s_donor% xtra5 = nova_mass_lost
+               b% s_donor% xtra8 = b% s_donor% xtra8 + n``ova_mass_lost
+               b% s_donor% xtra9 = b% s_donor% xtra9 + &
+                                    (1d0 - b% mass_transfer_beta) * mass_transferred
+               ! Reset WD mass reference after nova fires, deferred here so history captures beta > 0.
+               if (b% mass_transfer_beta > 0d0) &
+                  b% s_donor% xtra6 = b% m(b% point_mass_i)
+         end if
+!***************************************************************************!
       end function extras_binary_finish_step
 
       real(dp) function eval_rlobe(m1, m2, a) result(rlobe)
