@@ -2255,7 +2255,7 @@
       integer function how_many_extra_binary_history_columns(binary_id)
          use binary_def, only: binary_info
          integer, intent(in) :: binary_id
-         how_many_extra_binary_history_columns = 18
+         how_many_extra_binary_history_columns = 27
       end function how_many_extra_binary_history_columns
 
       subroutine data_for_extra_binary_history_columns(binary_id, n, names, vals, ierr)
@@ -3104,13 +3104,14 @@
                mass_transferred  = abs(b% mtransfer_rate) * b% s_donor% dt / Msun
                nova_mass_lost    = b% mass_transfer_beta * mass_transferred
                b% s_donor% xtra5 = nova_mass_lost
-               b% s_donor% xtra8 = b% s_donor% xtra8 + n``ova_mass_lost
+               b% s_donor% xtra8 = b% s_donor% xtra8 + nova_mass_lost
                b% s_donor% xtra9 = b% s_donor% xtra9 + &
                                     (1d0 - b% mass_transfer_beta) * mass_transferred
                ! Reset WD mass reference after nova fires, deferred here so history captures beta > 0.
                if (b% mass_transfer_beta > 0d0) &
                   b% s_donor% xtra6 = b% m(b% point_mass_i)
          end if
+      end if
 !***************************************************************************!
       end function extras_binary_finish_step
 
