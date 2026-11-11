@@ -1,5 +1,7 @@
 !default inlist
-
+!zams_filename = '/projects/b1119/POSYDON_ZAMS/v2_extra_ZAMS_models/POSYDON_v2_lowM/POSYDON_v2_lowM_1e+00_Zsol/zams_z1.42m2_y0.2703.data'
+	! switched to the low-mass-specific ZAMS table (already used by star2's inlist2) to test if it fixes the cool-surface NaN opacity crash for low-mass donors
+	set_rho_to_dm_div_dV = .true.
 &star_job
       show_log_description_at_start = .false.
 
