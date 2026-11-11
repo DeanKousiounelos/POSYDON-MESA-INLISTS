@@ -20,7 +20,8 @@
    do_jdot_ls = .false.
 
    mdot_scheme = "roche_lobe" ! This switches to Kolb after TAMS
-   limit_retention_by_mdot_edd= .true.
+   limit_retention_by_mdot_edd = .false.
+	!Changed limit_retention_by_mdot_edd to false here in order to just treat like a wd with beta mass loss perscription
    use_other_mdot_edd = .true.
 
    history_interval = 1
