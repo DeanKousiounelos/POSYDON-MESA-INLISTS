@@ -1,5 +1,7 @@
 ! only differences compared to default_common_inlists/inlist1
 
+
+
 &star_job
       show_log_description_at_start = .false.
 
