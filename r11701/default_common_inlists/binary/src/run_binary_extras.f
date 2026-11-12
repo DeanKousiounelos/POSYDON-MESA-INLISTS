@@ -33,9 +33,9 @@
 
       implicit none
 
-      ! Nova regime limits: set here once, used by in_nova_regime and the
-      ! nova mass-transfer gates below.
-      real(dp), parameter :: nova_m_wd_min      = 0.2d0   ! Msun
+      ! Nova regime limits: set here once, used by in_nova_regime, the
+      ! eta/ignition-mass fits and the nova mass-transfer gates below.
+      real(dp), parameter :: nova_m_wd_min      = 0.25d0  ! Msun
       real(dp), parameter :: nova_m_wd_max      = 1.44d0  ! Msun
       real(dp), parameter :: nova_log10mdot_min = -18d0   ! log10(Msun/yr)
 
@@ -887,9 +887,9 @@
          !b% s1% x_ctrl(1) used to adjust the Eddington limit in inlist1
          mdot_edd = mdot_edd * b% s1% x_ctrl(1)
       !if (my_nova_flag() = 1) then 
-         !call my_dmH
+         !call my_dmHee
          !call my_accretion_efficiency
-         !if (my_dmH = ____) then
+         !if (my_dmHee = ____) then
             !call my_m_loss
          
       end subroutine my_mdot_edd
@@ -902,7 +902,7 @@
          integer, intent(in) :: binary_id
          real(dp), intent(out) :: mloss !mass ejected per nova cycle [Msun]
          integer, intent(out) :: ierr
-         real(dp) :: dMH, eta
+         real(dp) :: dmHe, eta
          type (binary_info), pointer :: b
 
          ierr = 0
@@ -914,14 +914,14 @@
          return
       end if
 
-         call my_dMH(binary_id, dMH, ierr) !ignition mass
+         call my_dm_ig(binary_id, dmHe, ierr) !ignition mass
          if (ierr /= 0) return
 
          call my_eta_accretion(binary_id, eta, ierr) !retention efficiency
          if (ierr /= 0) return
 
          ! Ejected mass per nova: Delta_Mej = Delta_Mig * (1 - eta_H).
-         mloss = dMH * (1d0 - eta) !mass ejected per nova cycle
+         mloss = dmHe * (1d0 - eta) !mass ejected per nova cycle
 
       end subroutine my_m_loss
 
@@ -929,11 +929,11 @@
 
       !my_eta_accretion
       subroutine my_eta_accretion(binary_id, etaH, ierr)
-         ! Returns hydrogen accretion efficiency eta_H based on Wang+2018 fits.
-         ! Uses raw mtransfer_rate (no xfer_fraction) — the total H flux onto
+         ! Returns helium-nova retention efficiency eta_He based on Wu+2017 fits.
+         ! Uses raw mtransfer_rate (no xfer_fraction) — the total He flux onto
          ! the WD surface sets eta.
 
-         ! Inputs: WD mass (Msun), log10 accretion rate (Msun/yr). Output: eta_H in [0,1].
+         ! Inputs: WD mass (Msun), log10 accretion rate (Msun/yr). Output: eta_He in [0,1].
          integer, intent(in) :: binary_id
          real(dp), intent(out) :: etaH
          integer, intent(out) :: ierr
@@ -956,270 +956,244 @@
          end if
 
          m_wd      = b% m(b% point_mass_i) / Msun
-         log10mdot = log10_cr(abs(b% mtransfer_rate) * secyer / Msun)
+         ! Wu+2017 fits are clamped to the nova regime WD mass and Mdot limits.
+         m_wd      = min(max(m_wd, nova_m_wd_min), nova_m_wd_max)
+         log10mdot = log10_cr(max(10d0**nova_log10mdot_min, abs(b% mtransfer_rate) * secyer / Msun))
 
-         if ((m_wd >= 0.6d0) .and. (m_wd <= 0.7d0)) then
+         if ((m_wd >= 0.2d0) .and. (m_wd <= 0.7d0)) then
 
-            ! 0.6 lower curve
-            if (log10mdot > -8.097d0) then
-               fitlowereta = 1.26882419d0*pow3(log10mdot) + 30.51329427d0*pow2(log10mdot) &
-                           + 244.71761203d0*log10mdot + 654.81045119d0
-            else if (log10mdot > -10d0) then
-               fitlowereta = 0.0658d0*log10mdot + 0.7992d0
+            ! 0.2 lower curve
+            if (log10mdot > -7.421d0) then
+               fitlowereta = 128.69653622d0*pow4(log10mdot) + 3755.62839546d0*pow3(log10mdot) &
+                           + 41097.77848236d0*pow2(log10mdot) + 199876.15570843d0*log10mdot + 364523.39925814d0
             else
-               fitlowereta = 0.0375d0*log10mdot + 0.515d0
+               fitlowereta = 0.0284d0*log10mdot + 0.4944d0
             end if
 
             ! 0.7 higher curve
-            if (log10mdot > -8.222d0) then
-               fithighereta = 0.60632932d0*pow3(log10mdot) + 14.74271288d0*pow2(log10mdot) &
-                            + 119.52930871d0*log10mdot + 323.39248424d0
-            else if (log10mdot > -10d0) then
-               fithighereta = 0.0719d0*log10mdot + 0.845d0
+            if (log10mdot > -6.921d0) then
+               fithighereta = 128.69653622d0*pow4(log10mdot) + 3498.23532301d0*pow3(log10mdot) &
+                            + 35657.38069353d0*pow2(log10mdot) + 161530.75025466d0*log10mdot + 274398.30600877d0
             else
-               fithighereta = 0.0375d0*log10mdot + 0.489d0
+               fithighereta = 0.0271d0*log10mdot + 0.4214d0
             end if
 
-            M_WDlower  = 0.6d0
+            M_WDlower  = 0.2d0
             M_WDhigher = 0.7d0
 
-         else if ((m_wd >= 0.7d0) .and. (m_wd <= 0.8d0)) then
+         else if ((m_wd > 0.7d0) .and. (m_wd <= 0.8d0)) then
 
             ! 0.7 lower curve
-            if (log10mdot > -8.222d0) then
-               fitlowereta = 0.60632932d0*pow3(log10mdot) + 14.74271288d0*pow2(log10mdot) &
-                           + 119.52930871d0*log10mdot + 323.39248424d0
-            else if (log10mdot > -10d0) then
-               fitlowereta = 0.0719d0*log10mdot + 0.845d0
+            if (log10mdot > -6.921d0) then
+               fitlowereta = 128.69653622d0*pow4(log10mdot) + 3498.23532301d0*pow3(log10mdot) &
+                           + 35657.38069353d0*pow2(log10mdot) + 161530.75025466d0*log10mdot + 274398.30600877d0
             else
-               fitlowereta = 0.0375d0*log10mdot + 0.489d0
+               fitlowereta = 0.0271d0*log10mdot + 0.4214d0
             end if
 
             ! 0.8 higher curve
-            if (log10mdot > -8.222d0) then
-               fithighereta = -0.50065077d0*pow4(log10mdot) - 14.76592690d0*pow3(log10mdot) &
-                            - 162.29194136d0*pow2(log10mdot) - 786.96965746d0*log10mdot - 1418.36919563d0
-            else if (log10mdot > -10d0) then
-               fithighereta = 0.0444d0*log10mdot + 0.5501d0
+            if (log10mdot > -6.495d0) then
+               fithighereta = -2.81727160d0*pow4(log10mdot) + 842.92305137d0*pow3(log10mdot) &
+                            + 17025.57779911d0*pow2(log10mdot) + 111404.51221858d0*log10mdot + 241315.71447017d0
             else
-               fithighereta = 0.0375d0*log10mdot + 0.472d0
+               fithighereta = 0.0376d0*log10mdot + 0.5774d0
             end if
 
             M_WDlower  = 0.7d0
             M_WDhigher = 0.8d0
 
-         else if ((m_wd >= 0.8d0) .and. (m_wd <= 0.9d0)) then
+         else if ((m_wd > 0.8d0) .and. (m_wd <= 0.9d0)) then
 
             ! 0.8 lower curve
-            if (log10mdot > -8.222d0) then
-               fitlowereta = -0.50065077d0*pow4(log10mdot) - 14.76592690d0*pow3(log10mdot) &
-                           - 162.29194136d0*pow2(log10mdot) - 786.96965746d0*log10mdot - 1418.36919563d0
-            else if (log10mdot > -10d0) then
-               fitlowereta = 0.0444d0*log10mdot + 0.5501d0
+            if (log10mdot > -6.495d0) then
+               fitlowereta = -2.81727160d0*pow4(log10mdot) + 842.92305137d0*pow3(log10mdot) &
+                           + 17025.57779911d0*pow2(log10mdot) + 111404.51221858d0*log10mdot + 241315.71447017d0
             else
-               fitlowereta = 0.0375d0*log10mdot + 0.472d0
+               fitlowereta = 0.0376d0*log10mdot + 0.5774d0
             end if
 
             ! 0.9 higher curve
-            if (log10mdot > -8.222d0) then
-               fithighereta = 0.74958587d0*pow4(log10mdot) + 23.11975024d0*pow3(log10mdot) &
-                            + 267.36253222d0*pow2(log10mdot) + 1374.05805223d0*log10mdot + 2648.42148035d0
-            else if (log10mdot > -10d0) then
-               fithighereta = 0.0321d0*log10mdot + 0.4261d0
+            if (log10mdot > -6.585d0) then
+               fithighereta = 371.49410540d0*pow4(log10mdot) + 9601.91634884d0*pow3(log10mdot) &
+                            + 93061.48887580d0*pow2(log10mdot) + 400844.20977850d0*log10mdot + 647425.88293061d0
             else
-               fithighereta = 0.0375d0*log10mdot + 0.464d0
+               fithighereta = 0.0328d0*log10mdot + 0.4598d0
             end if
 
             M_WDlower  = 0.8d0
             M_WDhigher = 0.9d0
 
-         else if ((m_wd >= 0.9d0) .and. (m_wd <= 1.0d0)) then
+         else if ((m_wd > 0.9d0) .and. (m_wd <= 1.0d0)) then
 
             ! 0.9 lower curve
-            if (log10mdot > -8.222d0) then
-               fitlowereta = 0.74958587d0*pow4(log10mdot) + 23.11975024d0*pow3(log10mdot) &
-                           + 267.36253222d0*pow2(log10mdot) + 1374.05805223d0*log10mdot + 2648.42148035d0
-            else if (log10mdot > -10d0) then
-               fitlowereta = 0.0321d0*log10mdot + 0.4261d0
+            if (log10mdot > -6.585d0) then
+               fitlowereta = 371.49410540d0*pow4(log10mdot) + 9601.91634884d0*pow3(log10mdot) &
+                           + 93061.48887580d0*pow2(log10mdot) + 400844.20977850d0*log10mdot + 647425.88293061d0
             else
-               fitlowereta = 0.0375d0*log10mdot + 0.464d0
+               fitlowereta = 0.0328d0*log10mdot + 0.4598d0
             end if
 
             ! 1.0 higher curve
-            if (log10mdot > -7.301d0) then
-               fithighereta = 18.23435276d0*pow4(log10mdot) + 514.63820396d0*pow3(log10mdot) &
-                            + 5445.75095214d0*pow2(log10mdot) + 25606.40507043d0*log10mdot + 45143.59657352d0
-            else if (log10mdot > -10d0) then
-               fithighereta = 0.061d0*log10mdot + 0.6977d0
+            if (log10mdot > -6.155d0) then
+               fithighereta = 8.3115d0*log10mdot + 51.674d0
+            else if (log10mdot > -7.046d0) then
+               fithighereta = 0.42950525d0*pow2(log10mdot) + 6.08106227d0*log10mdot + 21.66204702d0
             else
-               fithighereta = 0.0375d0*log10mdot + 0.459d0
+               fithighereta = 0.0274d0*log10mdot + 0.331d0
             end if
 
             M_WDlower  = 0.9d0
             M_WDhigher = 1.0d0
 
-         else if ((m_wd >= 1.0d0) .and. (m_wd <= 1.1d0)) then
+         else if ((m_wd > 1.0d0) .and. (m_wd <= 1.1d0)) then
 
             ! 1.0 lower curve
-            if (log10mdot > -7.301d0) then
-               fitlowereta = 18.23435276d0*pow4(log10mdot) + 514.63820396d0*pow3(log10mdot) &
-                           + 5445.75095214d0*pow2(log10mdot) + 25606.40507043d0*log10mdot + 45143.59657352d0
-            else if (log10mdot > -10d0) then
-               fitlowereta = 0.061d0*log10mdot + 0.6977d0
+            if (log10mdot > -6.155d0) then
+               fitlowereta = 8.3115d0*log10mdot + 51.674d0
+            else if (log10mdot > -7.046d0) then
+               fitlowereta = 0.42950525d0*pow2(log10mdot) + 6.08106227d0*log10mdot + 21.66204702d0
             else
-               fitlowereta = 0.0375d0*log10mdot + 0.459d0
+               fitlowereta = 0.0274d0*log10mdot + 0.331d0
             end if
 
             ! 1.1 higher curve
-            if (log10mdot > -6.481d0) then
-               fithighereta = 29.464d0*log10mdot + 191.59d0
-            else if (log10mdot > -10d0) then
-               fithighereta = 0.01257896d0*pow6(log10mdot) + 0.63924936d0*pow5(log10mdot) &
-                            + 13.49899565d0*pow4(log10mdot) + 151.61793668d0*pow3(log10mdot) &
-                            + 955.30681729d0*pow2(log10mdot) + 3201.56125284d0*log10mdot + 4458.98741717d0
+            if (log10mdot > -5.921d0) then
+               fithighereta = 8.3856d0*log10mdot + 50.358d0
+            else if (log10mdot > -7.097d0) then
+               fithighereta = -0.19075473d0*pow4(log10mdot) - 4.92869779d0*pow3(log10mdot) &
+                            - 47.22636728d0*pow2(log10mdot) - 198.28033421d0*log10mdot - 306.30153647d0
             else
-               fithighereta = 0.0375d0*log10mdot + 0.478d0
+               fithighereta = 0.0275d0*log10mdot + 0.2987d0
             end if
 
             M_WDlower  = 1.0d0
             M_WDhigher = 1.1d0
 
-         else if ((m_wd >= 1.1d0) .and. (m_wd <= 1.2d0)) then
+         else if ((m_wd > 1.1d0) .and. (m_wd <= 1.2d0)) then
 
             ! 1.1 lower curve
-            if (log10mdot > -6.481d0) then
-               fitlowereta = 29.464d0*log10mdot + 191.59d0
-            else if (log10mdot > -10d0) then
-               fitlowereta = 0.01257896d0*pow6(log10mdot) + 0.63924936d0*pow5(log10mdot) &
-                           + 13.49899565d0*pow4(log10mdot) + 151.61793668d0*pow3(log10mdot) &
-                           + 955.30681729d0*pow2(log10mdot) + 3201.56125284d0*log10mdot + 4458.98741717d0
+            if (log10mdot > -5.921d0) then
+               fitlowereta = 8.3856d0*log10mdot + 50.358d0
+            else if (log10mdot > -7.097d0) then
+               fitlowereta = -0.19075473d0*pow4(log10mdot) - 4.92869779d0*pow3(log10mdot) &
+                           - 47.22636728d0*pow2(log10mdot) - 198.28033421d0*log10mdot - 306.30153647d0
             else
-               fitlowereta = 0.0375d0*log10mdot + 0.478d0
+               fitlowereta = 0.0275d0*log10mdot + 0.2987d0
             end if
 
             ! 1.2 higher curve
-            if (log10mdot > -6.398d0) then
-               fithighereta = 38.404d0*log10mdot + 246.09d0
-            else if (log10mdot > -10d0) then
-               fithighereta = 0.01863275d0*pow4(log10mdot) + 0.63375932d0*pow3(log10mdot) &
-                            + 8.03922144d0*pow2(log10mdot) + 45.11100840d0*log10mdot + 94.67330838d0
+            if (log10mdot > -5.854d0) then
+               fithighereta = 6.7216d0*log10mdot + 40.146d0
+            else if (log10mdot > -7.222d0) then
+               fithighereta = 0.61101079d0*pow4(log10mdot) + 16.16260323d0*pow3(log10mdot) &
+                            + 160.39740390d0*pow2(log10mdot) + 708.15701427d0*log10mdot + 1174.46712731d0
             else
-               fithighereta = 0.0375d0*log10mdot + 0.426d0
+               fithighereta = 0.0278d0*log10mdot + 0.2994d0
             end if
 
             M_WDlower  = 1.1d0
             M_WDhigher = 1.2d0
 
-         else if ((m_wd >= 1.2d0) .and. (m_wd <= 1.3d0)) then
+         else if ((m_wd > 1.2d0) .and. (m_wd <= 1.25d0)) then
 
             ! 1.2 lower curve
-            if (log10mdot > -6.398d0) then
-               fitlowereta = 38.404d0*log10mdot + 246.09d0
-            else if (log10mdot > -10d0) then
-               fitlowereta = 0.01863275d0*pow4(log10mdot) + 0.63375932d0*pow3(log10mdot) &
-                           + 8.03922144d0*pow2(log10mdot) + 45.11100840d0*log10mdot + 94.67330838d0
+            if (log10mdot > -5.854d0) then
+               fitlowereta = 6.7216d0*log10mdot + 40.146d0
+            else if (log10mdot > -7.222d0) then
+               fitlowereta = 0.61101079d0*pow4(log10mdot) + 16.16260323d0*pow3(log10mdot) &
+                           + 160.39740390d0*pow2(log10mdot) + 708.15701427d0*log10mdot + 1174.46712731d0
             else
-               fitlowereta = 0.0375d0*log10mdot + 0.426d0
+               fitlowereta = 0.0278d0*log10mdot + 0.2994d0
             end if
 
-            ! 1.3 higher curve
-            if (log10mdot > -6.301d0) then
-               fithighereta = 63.255d0*log10mdot + 399.02d0
-            else if (log10mdot > -10d0) then
-               fithighereta = 0.00761654d0*pow6(log10mdot) + 0.38074886d0*pow5(log10mdot) &
-                            + 7.90781049d0*pow4(log10mdot) + 87.34785494d0*pow3(log10mdot) &
-                            + 541.22637679d0*pow2(log10mdot) + 1783.79685277d0*log10mdot + 2443.49600493d0
+            ! 1.25 higher curve
+            if (log10mdot > -5.824d0) then
+               fithighereta = 7.3403d0*log10mdot + 43.604d0
+            else if (log10mdot > -7.222d0) then
+               fithighereta = 0.70445443d0*pow4(log10mdot) + 18.61070131d0*pow3(log10mdot) &
+                            + 184.34484390d0*pow2(log10mdot) + 811.82891151d0*log10mdot + 1342.09332478d0
             else
-               fithighereta = 0.0375d0*log10mdot + 0.442d0
+               fithighereta = 0.0278d0*log10mdot + 0.2924d0
             end if
 
             M_WDlower  = 1.2d0
+            M_WDhigher = 1.25d0
+
+         else if ((m_wd > 1.25d0) .and. (m_wd <= 1.3d0)) then
+
+            ! 1.25 lower curve
+            if (log10mdot > -5.824d0) then
+               fitlowereta = 7.3403d0*log10mdot + 43.604d0
+            else if (log10mdot > -7.222d0) then
+               fitlowereta = 0.70445443d0*pow4(log10mdot) + 18.61070131d0*pow3(log10mdot) &
+                           + 184.34484390d0*pow2(log10mdot) + 811.82891151d0*log10mdot + 1342.09332478d0
+            else
+               fitlowereta = 0.0278d0*log10mdot + 0.2924d0
+            end if
+
+            ! 1.3 higher curve
+            if (log10mdot > -5.824d0) then
+               fithighereta = 5.2446d0*log10mdot + 31.397d0
+            else if (log10mdot > -7.222d0) then
+               fithighereta = 0.35511452d0*pow4(log10mdot) + 9.43073062d0*pow3(log10mdot) &
+                            + 93.97568200d0*pow2(log10mdot) + 416.89622203d0*log10mdot + 695.71187519d0
+            else
+               fithighereta = 0.0278d0*log10mdot + 0.2754d0
+            end if
+
+            M_WDlower  = 1.25d0
             M_WDhigher = 1.3d0
 
-         else if ((m_wd >= 1.3d0) .and. (m_wd <= 1.35d0)) then
+         else if ((m_wd > 1.3d0) .and. (m_wd <= 1.35d0)) then
 
             ! 1.3 lower curve
-            if (log10mdot > -6.301d0) then
-               fitlowereta = 63.255d0*log10mdot + 399.02d0
-            else if (log10mdot > -10d0) then
-               fitlowereta = 0.00761654d0*pow6(log10mdot) + 0.38074886d0*pow5(log10mdot) &
-                           + 7.90781049d0*pow4(log10mdot) + 87.34785494d0*pow3(log10mdot) &
-                           + 541.22637679d0*pow2(log10mdot) + 1783.79685277d0*log10mdot + 2443.49600493d0
+            if (log10mdot > -5.824d0) then
+               fitlowereta = 5.2446d0*log10mdot + 31.397d0
+            else if (log10mdot > -7.222d0) then
+               fitlowereta = 0.35511452d0*pow4(log10mdot) + 9.43073062d0*pow3(log10mdot) &
+                           + 93.97568200d0*pow2(log10mdot) + 416.89622203d0*log10mdot + 695.71187519d0
             else
-               fitlowereta = 0.0375d0*log10mdot + 0.442d0
+               fitlowereta = 0.0278d0*log10mdot + 0.2754d0
             end if
 
             ! 1.35 higher curve
-            if (log10mdot > -6.301d0) then
-               fithighereta = 13.644d0*log10mdot + 86.505d0
-            else if (log10mdot > -10d0) then
-               fithighereta = 0.02356744d0*pow4(log10mdot) + 0.79605073d0*pow3(log10mdot) &
-                            + 10.02225648d0*pow2(log10mdot) + 55.77497830d0*log10mdot + 116.04245802d0
+            if (log10mdot > -5.824d0) then
+               fithighereta = 4.742d0*log10mdot + 28.497d0
+            else if (log10mdot > -7.301d0) then
+               fithighereta = 0.17534165d0*pow2(log10mdot) + 2.81395280d0*log10mdot + 11.31042978d0
             else
-               fithighereta = 0.0375d0*log10mdot + 0.511d0
+               fithighereta = 0.028d0*log10mdot + 0.315d0
             end if
 
             M_WDlower  = 1.3d0
             M_WDhigher = 1.35d0
 
-         else if (m_wd > 1.35d0) then
-            ! Extrapolate above 1.35 Msun using 1.35 and 1.44 curves
+         else
+            ! m_wd > 1.35 up to the clamped ceiling of 1.44 Msun
 
-            ! 1.35 curve
-            if (log10mdot > -6.301d0) then
-               fitlowereta = 13.644d0*log10mdot + 86.505d0
-            else if (log10mdot > -10d0) then
-               fitlowereta = 0.02356744d0*pow4(log10mdot) + 0.79605073d0*pow3(log10mdot) &
-                           + 10.02225648d0*pow2(log10mdot) + 55.77497830d0*log10mdot + 116.04245802d0
+            ! 1.35 lower curve
+            if (log10mdot > -5.824d0) then
+               fitlowereta = 4.742d0*log10mdot + 28.497d0
+            else if (log10mdot > -7.301d0) then
+               fitlowereta = 0.17534165d0*pow2(log10mdot) + 2.81395280d0*log10mdot + 11.31042978d0
             else
-               fitlowereta = 0.0375d0*log10mdot + 0.511d0
+               fitlowereta = 0.028d0*log10mdot + 0.315d0
             end if
 
-            ! 1.44 curve
-            if (log10mdot > -6.301d0) then
-               fithighereta = 13.644d0*log10mdot + 86.545d0
-            else if (log10mdot > -10d0) then
-               fithighereta = 0.02356744d0*pow4(log10mdot) + 0.79605073d0*pow3(log10mdot) &
-                            + 10.02225648d0*pow2(log10mdot) + 55.77497830d0*log10mdot + 116.08245802d0
+            ! 1.44 higher curve
+            if (log10mdot > -5.824d0) then
+               fithighereta = 4.742d0*log10mdot + 28.597d0
+            else if (log10mdot > -7.301d0) then
+               fithighereta = 0.17534165d0*pow2(log10mdot) + 2.81395280d0*log10mdot + 11.41042978d0
             else
-               fithighereta = 0.0375d0*log10mdot + 0.551d0
+               fithighereta = 0.028d0*log10mdot + 0.415d0
             end if
 
             M_WDlower  = 1.35d0
             M_WDhigher = 1.44d0
 
-         else
-            ! Extrapolate below 0.6 Msun using 0.2 and 0.6 curves
-
-            ! 0.2 curve
-            if (log10mdot > -10.8d0) then
-               fitlowereta = 0.03375668d0*pow6(log10mdot) + 1.96936922d0*pow5(log10mdot) &
-                           + 47.85435449d0*pow4(log10mdot) + 619.95702757d0*pow3(log10mdot) &
-                           + 4516.25622905d0*pow2(log10mdot) + 17541.05736755d0*log10mdot + 28378.89454540d0
-            else
-               fitlowereta = 0.0375d0*log10mdot + 0.551d0
-            end if
-
-            ! 0.6 curve
-            if (log10mdot > -8.097d0) then
-               fithighereta = 1.26882419d0*pow3(log10mdot) + 30.51329427d0*pow2(log10mdot) &
-                            + 244.71761203d0*log10mdot + 654.81045119d0
-            else if (log10mdot > -10d0) then
-               fithighereta = 0.0658d0*log10mdot + 0.7992d0
-            else
-               fithighereta = 0.0375d0*log10mdot + 0.515d0
-            end if
-
-            M_WDlower  = 0.2d0
-            M_WDhigher = 0.6d0
-
          end if
 
-         if (fithighereta > 1d0) fithighereta = 1d0
-         if (fitlowereta  > 1d0) fitlowereta  = 1d0
-!        floor eta at 0
-         if (fithighereta < 0d0) fithighereta = 0d0
-         if (fitlowereta  < 0d0) fitlowereta  = 0d0
          ! Linear interp: equivalent to np.interp(m_wd, [M_WDlower, M_WDhigher], [fitlowereta, fithighereta])
          etaH = fitlowereta + (m_wd - M_WDlower) * (fithighereta - fitlowereta) / (M_WDhigher - M_WDlower)
 
@@ -1229,140 +1203,650 @@
 
 !**********************************************!
 
-      subroutine my_dMH(binary_id, dMH, ierr)
-      !from formulae in Kemp et al. 2021 fitted to data from Kato et al. 2014
+      subroutine my_dmHe(binary_id, dmHe, ierr)
+      !from formulae in Kato et al. 2018 (M_WD>=1.0) and Piersanti et al. 2014
+      !(M_WD<1.0), as tabulated in binary_c's Henova_dMHe.c (KEMP_NOVAE module)
          integer, intent(in) :: binary_id
-         real(dp), intent(out) :: dMH !ignition mass [Msun]
+         real(dp), intent(out) :: dmHe !ignition mass [Msun]
          integer, intent(out) :: ierr
          type (binary_info), pointer :: b
          real(dp) :: m_wd, log10mdot
-         real(dp) :: M_WD_eneg4, M_WD_6eneg5, M_WD_3eneg5, M_WD_1p7eneg5
-         real(dp) :: M_WD_1eneg5, M_WD_6eneg6, M_WD_3eneg6, M_WD_1eneg6
-         real(dp) :: M_WD_3eneg7
-         real(dp), parameter :: M_WD_Chand  = 1.44d0
-         real(dp), parameter :: M_Hig_chand = 5d-8
+         real(dp) :: fitlower, fithigher
+         real(dp) :: M_WDlower, M_WDhigher
 
-         ierr          = 0
-         dMH           = 0d0
-         M_WD_eneg4    = 0d0
-         M_WD_6eneg5   = 0d0
-         M_WD_3eneg5   = 0d0
-         M_WD_1p7eneg5 = 0d0
-         M_WD_1eneg5   = 0d0
-         M_WD_6eneg6   = 0d0
-         M_WD_3eneg6   = 0d0
-         M_WD_1eneg6   = 0d0
-         M_WD_3eneg7   = 0d0
-
+         ierr       = 0
+         dmHe       = 0d0
+         fitlower   = 0d0
+         fithigher  = 0d0
+         M_WDlower  = 0d0
+         M_WDhigher = 0d0
 
          call binary_ptr(binary_id, b, ierr)
          if (ierr /=0) then
-            write(*,*) 'failed in binary_ptr in my_dMH'
+            write(*,*) 'failed in binary_ptr in my_dmHe'
             return
 
          end if
 
          m_wd = b% m(b% point_mass_i) / Msun
-         ! Floor Mdot at 1e-12 Msun/yr before taking log10, matching the
-         ! reference (Kemp/binary_c KEMP_NOVAE) fit's minimum trusted range.
-         log10mdot = log10_cr(max(1d-12, abs(b% mtransfer_rate) * secyer / Msun)) !convert to log10
+         ! Kato/Piersanti fits are clamped to the nova regime WD mass and Mdot limits.
+         m_wd = min(max(m_wd, nova_m_wd_min), nova_m_wd_max)
+         log10mdot = log10_cr(max(10d0**nova_log10mdot_min, abs(b% mtransfer_rate) * secyer / Msun)) !convert to log10
 
-         if(log10Mdot >= -7.7d0) then
-            M_WD_eneg4    = -0.01136821d0*pow2(log10Mdot) - 0.28779422d0*log10Mdot - 0.87275137d0
-            M_WD_6eneg5   = -0.00223874d0*pow3(log10Mdot) - 0.07980979d0*pow2(log10Mdot) - 0.95727391d0*log10Mdot - 2.88226600d0
-            M_WD_3eneg5   = -0.02513162d0*pow2(log10Mdot) - 0.51596425d0*log10Mdot - 1.55913869d0
-            M_WD_1p7eneg5 = -0.00286937d0*pow3(log10Mdot) - 0.09804557d0*pow2(log10Mdot) - 1.11466878d0*log10Mdot - 3.04208220d0
-            M_WD_1eneg5   = -0.00271579d0*pow3(log10Mdot) - 0.09167551d0*pow2(log10Mdot) - 1.02778587d0*log10Mdot - 2.59280133d0
-            M_WD_6eneg6   = -0.00281513d0*pow3(log10Mdot) - 0.09252102d0*pow2(log10Mdot) - 1.00663332d0*log10Mdot - 2.35355189d0
-            M_WD_3eneg6   = -0.00162294d0*pow3(log10Mdot) - 0.06120773d0*pow2(log10Mdot) - 0.71424226d0*log10Mdot - 1.34053269d0
-            M_WD_1eneg6   = -0.00284309d0*pow3(log10Mdot) - 0.08134364d0*pow2(log10Mdot) - 0.77925207d0*log10Mdot - 1.13067755d0
-            M_WD_3eneg7   = -0.01995254d0*pow2(log10Mdot) - 0.31057708d0*log10Mdot + 0.17515477d0
+         if ((m_wd >= 0.2d0) .and. (m_wd <= 0.6d0)) then
 
-         else if(log10Mdot >= -9d0) then
-            M_WD_eneg4    =  0.03123628d0*pow3(log10Mdot) + 0.75350110d0*pow2(log10Mdot) + 5.9421100d0*log10Mdot + 16.00580843d0
-            M_WD_6eneg5   = -0.00223874d0*pow3(log10Mdot) - 0.07980979d0*pow2(log10Mdot) - 0.9572739d0*log10Mdot - 2.88226600d0
-            M_WD_3eneg5   =  0.03007799d0*pow3(log10Mdot) + 0.69444233d0*pow2(log10Mdot) + 5.2031620d0*log10Mdot + 13.54164455d0
-            M_WD_1p7eneg5 = -0.00286937d0*pow3(log10Mdot) - 0.09804557d0*pow2(log10Mdot) - 1.1146687d0*log10Mdot - 3.04208220d0
-            M_WD_1eneg5   = -0.00271579d0*pow3(log10Mdot) - 0.09167551d0*pow2(log10Mdot) - 1.0277858d0*log10Mdot - 2.59280133d0
-            M_WD_6eneg6   = -0.00281513d0*pow3(log10Mdot) - 0.09252102d0*pow2(log10Mdot) - 1.0066333d0*log10Mdot - 2.35355189d0
-            M_WD_3eneg6   = -0.00162294d0*pow3(log10Mdot) - 0.06120773d0*pow2(log10Mdot) - 0.7142422d0*log10Mdot - 1.34053269d0
-            M_WD_1eneg6   = -0.00284309d0*pow3(log10Mdot) - 0.08134364d0*pow2(log10Mdot) - 0.7792520d0*log10Mdot - 1.13067755d0
-            M_WD_3eneg7   = -0.0062d0 * log10Mdot + 1.3336d0
+            ! 0.2 lower curve: returns the constant 0.2 verbatim (NOT in
+            ! log10 space, unlike every other node here) - kept exactly as
+            ! in the reference; after exp10_cr below this node maps to
+            ! ~1.585 Msun rather than 0.2 Msun.
+            fitlower = 0.2d0
 
-         else if(log10Mdot < -9) then
-            M_WD_eneg4    =-0.0225d0 * log10Mdot + 0.5856d0
-            M_WD_6eneg5   =-0.0246d0 * log10Mdot + 0.6755d0
-            M_WD_3eneg5   =-0.0224d0 * log10Mdot + 0.8371d0
-            M_WD_1p7eneg5 =-0.0173d0 * log10Mdot + 0.9779d0
-            M_WD_1eneg5   =-0.0148d0 * log10Mdot + 1.0727d0
-            M_WD_6eneg6   =-0.0141d0 * log10Mdot + 1.1325d0
-            M_WD_3eneg6   =-0.0092d0 * log10Mdot + 1.2307d0
-            M_WD_1eneg6   =-0.0047d0 * log10Mdot + 1.3239d0
-            M_WD_3eneg7   =-0.0062d0 * log10Mdot + 1.3336d0
-      end if
+            ! 0.6 higher curve
+            if (log10mdot > -7.39d0) then
+               fithigher = -1.2658d0*log10mdot - 10.79d0
+            else
+               fithigher = -2.3314d0*log10mdot - 18.668d0
+            end if
 
-         ! Reference (Kemp/binary_c KEMP_NOVAE) uses a dedicated branch above
-         ! log10Mdot = -7.2 for the 1e-4, 3e-5, and 6e-5 Msun ignition-mass
-         ! contours only; the other six contours share the same formula across
-         ! -7.7 .. -7.2 and above, so they are left as computed above.
-         if (log10Mdot >= -7.2d0) then
-            M_WD_eneg4  = -0.04596643d0*pow2(log10Mdot) - 0.77067908d0*log10Mdot - 2.54725295d0
-            M_WD_3eneg5 = -0.05736748d0*pow2(log10Mdot) - 0.94076143d0*log10Mdot - 2.94511325d0
-            M_WD_6eneg5 = -0.05119815d0*pow2(log10Mdot) - 0.84433509d0*log10Mdot - 2.70816224d0
+            M_WDlower  = 0.2d0
+            M_WDhigher = 0.6d0
+
+         else if ((m_wd > 0.6d0) .and. (m_wd <= 0.7d0)) then
+
+            ! 0.6 lower curve
+            if (log10mdot > -7.39d0) then
+               fitlower = -1.2658d0*log10mdot - 10.79d0
+            else
+               fitlower = -2.3314d0*log10mdot - 18.668d0
+            end if
+
+            ! 0.7 higher curve
+            if (log10mdot > -7.39d0) then
+               fithigher = -0.9928d0*log10mdot - 8.8399d0
+            else
+               fithigher = -2.8393d0*log10mdot - 22.535d0
+            end if
+
+            M_WDlower  = 0.6d0
+            M_WDhigher = 0.7d0
+
+         else if ((m_wd > 0.7d0) .and. (m_wd <= 0.81d0)) then
+
+            ! 0.7 lower curve
+            if (log10mdot > -7.39d0) then
+               fitlower = -0.9928d0*log10mdot - 8.8399d0
+            else
+               fitlower = -2.8393d0*log10mdot - 22.535d0
+            end if
+
+            ! 0.81 higher curve
+            if (log10mdot > -7.40d0) then
+               fithigher = -1.2462d0*log10mdot - 10.729d0
+            else
+               fithigher = -2.7234d0*log10mdot - 21.695d0
+            end if
+
+            M_WDlower  = 0.7d0
+            M_WDhigher = 0.81d0
+
+         else if ((m_wd > 0.81d0) .and. (m_wd <= 0.92d0)) then
+
+            ! 0.81 lower curve
+            if (log10mdot > -7.40d0) then
+               fitlower = -1.2462d0*log10mdot - 10.729d0
+            else
+               fitlower = -2.7234d0*log10mdot - 21.695d0
+            end if
+
+            ! 0.92 higher curve
+            if (log10mdot > -7.30d0) then
+               fithigher = -0.8228d0*log10mdot - 7.8311d0
+            else
+               fithigher = -2.0714d0*log10mdot - 16.929d0
+            end if
+
+            M_WDlower  = 0.81d0
+            M_WDhigher = 0.92d0
+
+         else if ((m_wd > 0.92d0) .and. (m_wd <= 1.02d0)) then
+
+            ! 0.92 lower curve
+            if (log10mdot > -7.30d0) then
+               fitlower = -0.8228d0*log10mdot - 7.8311d0
+            else
+               fitlower = -2.0714d0*log10mdot - 16.929d0
+            end if
+
+            ! 1.02 higher curve
+            if (log10mdot > -7.09d0) then
+               fithigher = -0.9181d0*log10mdot - 8.6514d0
+            else
+               fithigher = -2.0406d0*log10mdot - 16.597d0
+            end if
+
+            M_WDlower  = 0.92d0
+            M_WDhigher = 1.02d0
+
+         else if ((m_wd > 1.02d0) .and. (m_wd <= 1.10d0)) then
+
+            ! 1.02 lower curve
+            if (log10mdot > -7.09d0) then
+               fitlower = -0.9181d0*log10mdot - 8.6514d0
+            else
+               fitlower = -2.0406d0*log10mdot - 16.597d0
+            end if
+
+            ! 1.10 higher curve
+            if (log10mdot < -6.0d0) then
+               fithigher = 1.72662751d0*pow4(log10mdot) + 45.88762486d0*pow3(log10mdot) &
+                         + 456.63345197d0*pow2(log10mdot) + 2015.69281770d0*log10mdot + 3325.89047580d0
+            else
+               fithigher = -0.0937d0*log10mdot - 4.0218d0
+            end if
+
+            M_WDlower  = 1.02d0
+            M_WDhigher = 1.10d0
+
+         else if ((m_wd > 1.10d0) .and. (m_wd <= 1.20d0)) then
+
+            ! 1.10 lower curve
+            if (log10mdot < -6.0d0) then
+               fitlower = 1.72662751d0*pow4(log10mdot) + 45.88762486d0*pow3(log10mdot) &
+                        + 456.63345197d0*pow2(log10mdot) + 2015.69281770d0*log10mdot + 3325.89047580d0
+            else
+               fitlower = -0.0937d0*log10mdot - 4.0218d0
+            end if
+
+            ! 1.20 higher curve
+            if (log10mdot < -6.0d0) then
+               fithigher = 0.91755524d0*pow4(log10mdot) + 24.10100929d0*pow3(log10mdot) &
+                         + 236.98730163d0*pow2(log10mdot) + 1033.14600808d0*log10mdot + 1680.17435446d0
+            else
+               fithigher = -0.0542d0*log10mdot - 4.1937d0
+            end if
+
+            M_WDlower  = 1.10d0
+            M_WDhigher = 1.20d0
+
+         else if ((m_wd > 1.20d0) .and. (m_wd <= 1.25d0)) then
+
+            ! 1.20 lower curve
+            if (log10mdot < -6.0d0) then
+               fitlower = 0.91755524d0*pow4(log10mdot) + 24.10100929d0*pow3(log10mdot) &
+                        + 236.98730163d0*pow2(log10mdot) + 1033.14600808d0*log10mdot + 1680.17435446d0
+            else
+               fitlower = -0.0542d0*log10mdot - 4.1937d0
+            end if
+
+            ! 1.25 higher curve
+            if (log10mdot < -6.0d0) then
+               fithigher = 1.68244304d0*pow4(log10mdot) + 45.15739606d0*pow3(log10mdot) &
+                         + 453.76725009d0*pow2(log10mdot) + 2022.35971770d0*log10mdot + 3368.09376231d0
+            else
+               fithigher = -0.1274d0*log10mdot - 4.7732d0
+            end if
+
+            M_WDlower  = 1.20d0
+            M_WDhigher = 1.25d0
+
+         else if ((m_wd > 1.25d0) .and. (m_wd <= 1.30d0)) then
+
+            ! 1.25 lower curve
+            if (log10mdot < -6.0d0) then
+               fitlower = 1.68244304d0*pow4(log10mdot) + 45.15739606d0*pow3(log10mdot) &
+                        + 453.76725009d0*pow2(log10mdot) + 2022.35971770d0*log10mdot + 3368.09376231d0
+            else
+               fitlower = -0.1274d0*log10mdot - 4.7732d0
+            end if
+
+            ! 1.30 higher curve
+            if (log10mdot < -6.0d0) then
+               fithigher = 1.16410162d0*pow4(log10mdot) + 30.86542279d0*pow3(log10mdot) &
+                         + 306.21947654d0*pow2(log10mdot) + 1346.49353679d0*log10mdot + 2208.95849065d0
+            else
+               fithigher = -0.1574d0*log10mdot - 5.3083d0
+            end if
+
+            M_WDlower  = 1.25d0
+            M_WDhigher = 1.30d0
+
+         else if ((m_wd > 1.30d0) .and. (m_wd <= 1.35d0)) then
+
+            ! 1.30 lower curve
+            if (log10mdot < -6.0d0) then
+               fitlower = 1.16410162d0*pow4(log10mdot) + 30.86542279d0*pow3(log10mdot) &
+                        + 306.21947654d0*pow2(log10mdot) + 1346.49353679d0*log10mdot + 2208.95849065d0
+            else
+               fitlower = -0.1574d0*log10mdot - 5.3083d0
+            end if
+
+            ! 1.35 higher curve
+            if (log10mdot < -6.0d0) then
+               fithigher = 0.47596972d0*pow4(log10mdot) + 12.61002433d0*pow3(log10mdot) &
+                         + 125.08958464d0*pow2(log10mdot) + 549.88858261d0*log10mdot + 898.29715596d0
+            else
+               fithigher = -0.0934d0*log10mdot - 5.3203d0
+            end if
+
+            M_WDlower  = 1.30d0
+            M_WDhigher = 1.35d0
+
+         else if ((m_wd > 1.35d0) .and. (m_wd <= 1.38d0)) then
+
+            ! 1.35 lower curve
+            if (log10mdot < -6.0d0) then
+               fitlower = 0.47596972d0*pow4(log10mdot) + 12.61002433d0*pow3(log10mdot) &
+                        + 125.08958464d0*pow2(log10mdot) + 549.88858261d0*log10mdot + 898.29715596d0
+            else
+               fitlower = -0.0934d0*log10mdot - 5.3203d0
+            end if
+
+            ! 1.38 higher curve
+            if (log10mdot < -6.0d0) then
+               fithigher = 0.54437094d0*pow4(log10mdot) + 14.68324636d0*pow3(log10mdot) &
+                         + 148.24381872d0*pow2(log10mdot) + 663.22092056d0*log10mdot + 1103.57417218d0
+            else
+               fithigher = -0.1056d0*log10mdot - 5.6752d0
+            end if
+
+            M_WDlower  = 1.35d0
+            M_WDhigher = 1.38d0
+
+         else
+            ! m_wd > 1.38 up to the clamped ceiling of 1.44 Msun
+
+            ! 1.38 lower curve
+            if (log10mdot < -6.0d0) then
+               fitlower = 0.54437094d0*pow4(log10mdot) + 14.68324636d0*pow3(log10mdot) &
+                        + 148.24381872d0*pow2(log10mdot) + 663.22092056d0*log10mdot + 1103.57417218d0
+            else
+               fitlower = -0.1056d0*log10mdot - 5.6752d0
+            end if
+
+            ! 1.44 higher curve: M_Heig_chand = log10(8e-7) (previously a
+            ! natural-log bug in the reference, fixed upstream to log10)
+            fithigher = log10_cr(8d-7)
+
+            M_WDlower  = 1.38d0
+            M_WDhigher = 1.44d0
+
          end if
 
-         if (m_wd <= M_WD_6eneg5 .and. m_wd >= M_WD_eneg4) then
-             write(*,*) 'dMH is between 6e-5 and e-4 Msun'
-            dMH = 1d-4 + (m_wd - M_WD_eneg4)*(6d-5 - 1d-4)/(M_WD_6eneg5 - M_WD_eneg4)
+         ! Linear interp of log10(Delta_M_ig) in mass, then back to linear
+         ! space (matches the reference's interp_lin(...) followed by exp10()).
+         dmHe = exp10_cr(fitlower + (m_wd - M_WDlower) * (fithigher - fitlower) / (M_WDhigher - M_WDlower))
 
-         else if (m_wd <= M_WD_3eneg5 .and. m_wd >= M_WD_6eneg5) then
-             write(*,*) 'M_WD is between 3e-5 and 6e-5 Msun'
-            dMH = 6d-5 + (m_wd - M_WD_6eneg5)*(3d-5 - 6d-5)/(M_WD_3eneg5 - M_WD_6eneg5)
+      end subroutine my_dmHe
 
-         else if (m_wd <= M_WD_1p7eneg5 .and. m_wd >= M_WD_3eneg5) then
-             write(*,*) 'M_WD is between 1.7e-5 and 3e-5 Msun'
-            dMH = 3d-5 + (m_wd - M_WD_3eneg5)*(1.7d-5 - 3d-5)/(M_WD_1p7eneg5 - M_WD_3eneg5)
+!**************************************************!
 
-         else if (m_wd <= M_WD_1eneg5 .and. m_wd >= M_WD_1p7eneg5) then
-             write(*,*) 'M_WD is between 1e-5 and 1.7e-5 Msun'
-            dMH = 1.7d-5 + (m_wd - M_WD_1p7eneg5)*(1d-5 - 1.7d-5)/(M_WD_1eneg5 - M_WD_1p7eneg5)
+      subroutine my_Hedetonation(binary_id, dmHedet, ierr)
+      !He ignition mass in the low-flash/detonation regime, from formulae in
+      !Kato et al. 2018 (M_WD>=1.0) and Piersanti et al. 2014 (M_WD<1.0), as
+      !tabulated in binary_c's Hedet_dMHe.c (KEMP_NOVAE module).
+      !Shares the same curves as my_dmHe in a band of Mdot for each WD mass;
+      !only differs below that band (where it flattens to ~1e-3-0.7 Msun).
+         integer, intent(in) :: binary_id
+         real(dp), intent(out) :: dmHedet !ignition mass [Msun]
+         integer, intent(out) :: ierr
+         type (binary_info), pointer :: b
+         real(dp) :: m_wd, log10mdot
+         real(dp) :: fitlower, fithigher
+         real(dp) :: M_WDlower, M_WDhigher
 
-         else if (m_wd <= M_WD_6eneg6 .and. m_wd >= M_WD_1eneg5) then
-             write(*,*) 'M_WD is between 6e-6 and 1e-5 Msun'
-            dMH = 1d-5 + (m_wd - M_WD_1eneg5)*(6d-6 - 1d-5)/(M_WD_6eneg6 - M_WD_1eneg5)
+         ierr       = 0
+         dmHedet    = 0d0
+         fitlower   = 0d0
+         fithigher  = 0d0
+         M_WDlower  = 0d0
+         M_WDhigher = 0d0
 
-         else if (m_wd <= M_WD_3eneg6 .and. m_wd >= M_WD_6eneg6) then
-             write(*,*) 'M_WD is betweenn 3e-6 and 6e-6 Msun'
-            dMH = 6d-6 + (m_wd - M_WD_6eneg6)*(3d-6 - 6d-6)/(M_WD_3eneg6 - M_WD_6eneg6)
+         call binary_ptr(binary_id, b, ierr)
+         if (ierr /=0) then
+            write(*,*) 'failed in binary_ptr in my_Hedetonation'
+            return
 
-         else if (m_wd <= M_WD_1eneg6 .and. m_wd >= M_WD_3eneg6) then
-             write(*,*) 'M_WD is between 1e-6 and 3e-6 Msun'
-            dMH = 3d-6 + (m_wd - M_WD_3eneg6)*(1d-6 - 3d-6)/(M_WD_1eneg6 - M_WD_3eneg6)
+         end if
 
-         else if (m_wd <= M_WD_3eneg7 .and. m_wd >= M_WD_1eneg6) then
-             write(*,*) 'M_WD is between 3e-7 and 1e-6 Msun'
-            dMH = 1d-6 + (m_wd - M_WD_1eneg6)*(3d-7 - 1d-6)/(M_WD_3eneg7 - M_WD_1eneg6)
+         m_wd = b% m(b% point_mass_i) / Msun
+         ! Kato/Piersanti fits are clamped to the nova regime WD mass and Mdot limits
+         ! (equivalent to np.interp holding endpoint values in the reference).
+         m_wd = min(max(m_wd, nova_m_wd_min), nova_m_wd_max)
+         log10mdot = log10_cr(max(10d0**nova_log10mdot_min, abs(b% mtransfer_rate) * secyer / Msun)) !convert to log10
 
-         else if (m_wd < M_WD_eneg4) then
-             write(*,*) 'M_WD is between 1e-7 and 4e-6 Msun'
-            dMH = 4d-4 + (m_wd - 0.2d0)*(1d-4 - 4d-4)/(M_WD_eneg4 - 0.2d0)
+         if ((m_wd >= 0.2d0) .and. (m_wd <= 0.6d0)) then
 
-         else if (m_wd > M_WD_3eneg7) then
-             write(*,*) 'M_WD is between 5e-8 and 3e-7 Msun'
-            dMH = 3d-7 + (m_wd - M_WD_3eneg7)*(M_Hig_chand - 3d-7)/(M_WD_Chand - M_WD_3eneg7)
+            ! 0.2 lower curve: constant 0.2 verbatim (phantom point, same as my_dmHe)
+            fitlower = 0.2d0
 
-      end if
+            ! 0.6 higher curve
+            if (log10mdot >= -7.82d0) then
+               fithigher = -2.3314d0*log10mdot - 18.668d0
+            else if (log10mdot >= -9d0) then
+               fithigher = -0.13105692d0*pow3(log10mdot) - 3.35859429d0*pow2(log10mdot) &
+                         - 28.84546767d0*log10mdot - 83.28360749d0
+            else
+               fithigher = -0.0303d0*log10mdot - 0.4544d0
+            end if
 
-      end subroutine my_dMH
+            M_WDlower  = 0.2d0
+            M_WDhigher = 0.6d0
+
+         else if ((m_wd > 0.6d0) .and. (m_wd <= 0.7d0)) then
+
+            ! 0.6 lower curve
+            if (log10mdot >= -7.82d0) then
+               fitlower = -2.3314d0*log10mdot - 18.668d0
+            else if (log10mdot >= -9d0) then
+               fitlower = -0.13105692d0*pow3(log10mdot) - 3.35859429d0*pow2(log10mdot) &
+                        - 28.84546767d0*log10mdot - 83.28360749d0
+            else
+               fitlower = -0.0303d0*log10mdot - 0.4544d0
+            end if
+
+            ! 0.7 higher curve
+            if (log10mdot >= -7.70d0) then
+               fithigher = -2.8393d0*log10mdot - 22.535d0
+            else if (log10mdot >= -9d0) then
+               fithigher = -0.68502223d0*pow4(log10mdot) - 23.27090657d0*pow3(log10mdot) &
+                         - 296.28435839d0*pow2(log10mdot) - 1675.83253716d0*log10mdot - 3553.76035429d0
+            else
+               fithigher = -0.0251d0*log10mdot - 0.4658d0
+            end if
+
+            M_WDlower  = 0.6d0
+            M_WDhigher = 0.7d0
+
+         else if ((m_wd > 0.7d0) .and. (m_wd <= 0.81d0)) then
+
+            ! 0.7 lower curve
+            if (log10mdot >= -7.70d0) then
+               fitlower = -2.8393d0*log10mdot - 22.535d0
+            else if (log10mdot >= -9d0) then
+               fitlower = -0.68502223d0*pow4(log10mdot) - 23.27090657d0*pow3(log10mdot) &
+                        - 296.28435839d0*pow2(log10mdot) - 1675.83253716d0*log10mdot - 3553.76035429d0
+            else
+               fitlower = -0.0251d0*log10mdot - 0.4658d0
+            end if
+
+            ! 0.81 higher curve
+            if (log10mdot >= -7.60d0) then
+               fithigher = -2.7234d0*log10mdot - 21.695d0
+            else if (log10mdot >= -8.82d0) then
+               fithigher = -0.89021703d0*pow3(log10mdot) - 22.38723555d0*pow2(log10mdot) &
+                         - 187.76315351d0*log10mdot - 525.64755404d0
+            else
+               fithigher = -0.0265d0*log10mdot - 0.5781d0
+            end if
+
+            M_WDlower  = 0.7d0
+            M_WDhigher = 0.81d0
+
+         else if ((m_wd > 0.81d0) .and. (m_wd <= 0.92d0)) then
+
+            ! 0.81 lower curve
+            if (log10mdot >= -7.60d0) then
+               fitlower = -2.7234d0*log10mdot - 21.695d0
+            else if (log10mdot >= -8.82d0) then
+               fitlower = -0.89021703d0*pow3(log10mdot) - 22.38723555d0*pow2(log10mdot) &
+                        - 187.76315351d0*log10mdot - 525.64755404d0
+            else
+               fitlower = -0.0265d0*log10mdot - 0.5781d0
+            end if
+
+            ! 0.92 higher curve
+            if (log10mdot >= -7.52d0) then
+               fithigher = -2.0714d0*log10mdot - 16.929d0
+            else if (log10mdot >= -8.82d0) then
+               fithigher = -2.22457174d0*pow4(log10mdot) - 74.06815881d0*pow3(log10mdot) &
+                         - 924.25967441d0*pow2(log10mdot) - 5123.20522589d0*log10mdot - 10644.68164309d0
+            else
+               fithigher = -0.0238d0*log10mdot - 0.6265d0
+            end if
+
+            M_WDlower  = 0.81d0
+            M_WDhigher = 0.92d0
+
+         else if ((m_wd > 0.92d0) .and. (m_wd <= 1.02d0)) then
+
+            ! 0.92 lower curve
+            if (log10mdot >= -7.52d0) then
+               fitlower = -2.0714d0*log10mdot - 16.929d0
+            else if (log10mdot >= -8.82d0) then
+               fitlower = -2.22457174d0*pow4(log10mdot) - 74.06815881d0*pow3(log10mdot) &
+                        - 924.25967441d0*pow2(log10mdot) - 5123.20522589d0*log10mdot - 10644.68164309d0
+            else
+               fitlower = -0.0238d0*log10mdot - 0.6265d0
+            end if
+
+            ! 1.02 higher curve
+            if (log10mdot >= -7.30d0) then
+               fithigher = -2.0406d0*log10mdot - 16.597d0
+            else if (log10mdot >= -8.82d0) then
+               fithigher = -0.52114281d0*pow3(log10mdot) - 13.26176747d0*pow2(log10mdot) &
+                         - 112.71207541d0*log10mdot - 320.54975268d0
+            else
+               fithigher = -0.0282d0*log10mdot - 0.7734d0
+            end if
+
+            M_WDlower  = 0.92d0
+            M_WDhigher = 1.02d0
+
+         else if ((m_wd > 1.02d0) .and. (m_wd < 1.10d0) .and. (log10mdot >= -6.0d0)) then
+            ! The reference's 1.02-1.10 bridge only covers log10mdot < -6; above
+            ! that no branch matches and it falls through to 10**0 = 1 Msun.
+            ! Kept verbatim so results match the reference exactly.
+
+            fitlower   = 0d0
+            fithigher  = 0d0
+            M_WDlower  = 1.02d0
+            M_WDhigher = 1.10d0
+
+         else if ((m_wd > 1.02d0) .and. (m_wd <= 1.10d0)) then
+            ! Bridge: 1.10 from Kato 2018, 1.02 from Piersanti 2014
+
+            ! 1.02 lower curve
+            if (log10mdot >= -7.30d0) then
+               fitlower = -2.0406d0*log10mdot - 16.597d0
+            else if (log10mdot >= -8.82d0) then
+               fitlower = -0.52114281d0*pow3(log10mdot) - 13.26176747d0*pow2(log10mdot) &
+                        - 112.71207541d0*log10mdot - 320.54975268d0
+            else
+               fitlower = -0.0282d0*log10mdot - 0.7734d0
+            end if
+
+            ! 1.10 higher curve
+            if (log10mdot >= -7.56d0) then
+               fithigher = 1.72662751d0*pow4(log10mdot) + 45.88762486d0*pow3(log10mdot) &
+                         + 456.63345197d0*pow2(log10mdot) + 2015.69281770d0*log10mdot + 3325.89047580d0
+            else
+               fithigher = -0.0731d0*log10mdot - 2.1163d0
+            end if
+
+            M_WDlower  = 1.02d0
+            M_WDhigher = 1.10d0
+
+         else if ((m_wd > 1.10d0) .and. (m_wd <= 1.20d0)) then
+
+            ! 1.10 lower curve
+            if (log10mdot >= -7.56d0) then
+               fitlower = 1.72662751d0*pow4(log10mdot) + 45.88762486d0*pow3(log10mdot) &
+                        + 456.63345197d0*pow2(log10mdot) + 2015.69281770d0*log10mdot + 3325.89047580d0
+            else
+               fitlower = -0.0731d0*log10mdot - 2.1163d0
+            end if
+
+            ! 1.20 higher curve
+            if (log10mdot >= -7.67d0) then
+               fithigher = 0.91755524d0*pow4(log10mdot) + 24.10100929d0*pow3(log10mdot) &
+                         + 236.98730163d0*pow2(log10mdot) + 1033.14600808d0*log10mdot + 1680.17435446d0
+            else
+               fithigher = -0.0646d0*log10mdot - 2.1626d0
+            end if
+
+            M_WDlower  = 1.10d0
+            M_WDhigher = 1.20d0
+
+         else if ((m_wd > 1.20d0) .and. (m_wd <= 1.25d0)) then
+
+            ! 1.20 lower curve
+            if (log10mdot >= -7.67d0) then
+               fitlower = 0.91755524d0*pow4(log10mdot) + 24.10100929d0*pow3(log10mdot) &
+                        + 236.98730163d0*pow2(log10mdot) + 1033.14600808d0*log10mdot + 1680.17435446d0
+            else
+               fitlower = -0.0646d0*log10mdot - 2.1626d0
+            end if
+
+            ! 1.25 higher curve
+            if (log10mdot >= -7.62d0) then
+               fithigher = 1.68244304d0*pow4(log10mdot) + 45.15739606d0*pow3(log10mdot) &
+                         + 453.76725009d0*pow2(log10mdot) + 2022.35971770d0*log10mdot + 3368.09376231d0
+            else
+               fithigher = -0.0957d0*log10mdot - 2.8734d0
+            end if
+
+            M_WDlower  = 1.20d0
+            M_WDhigher = 1.25d0
+
+         else if ((m_wd > 1.25d0) .and. (m_wd <= 1.30d0)) then
+
+            ! 1.25 lower curve
+            if (log10mdot >= -7.62d0) then
+               fitlower = 1.68244304d0*pow4(log10mdot) + 45.15739606d0*pow3(log10mdot) &
+                        + 453.76725009d0*pow2(log10mdot) + 2022.35971770d0*log10mdot + 3368.09376231d0
+            else
+               fitlower = -0.0957d0*log10mdot - 2.8734d0
+            end if
+
+            ! 1.30 higher curve
+            if (log10mdot >= -7.6920763d0) then
+               fithigher = 1.16410162d0*pow4(log10mdot) + 30.86542279d0*pow3(log10mdot) &
+                         + 306.21947654d0*pow2(log10mdot) + 1346.49353679d0*log10mdot + 2208.95849065d0
+            else
+               fithigher = -0.0888d0*log10mdot - 2.8977d0
+            end if
+
+            M_WDlower  = 1.25d0
+            M_WDhigher = 1.30d0
+
+         else if ((m_wd > 1.30d0) .and. (m_wd <= 1.35d0)) then
+
+            ! 1.30 lower curve
+            if (log10mdot >= -7.6920763d0) then
+               fitlower = 1.16410162d0*pow4(log10mdot) + 30.86542279d0*pow3(log10mdot) &
+                        + 306.21947654d0*pow2(log10mdot) + 1346.49353679d0*log10mdot + 2208.95849065d0
+            else
+               fitlower = -0.0888d0*log10mdot - 2.8977d0
+            end if
+
+            ! 1.35 higher curve
+            if (log10mdot >= -7.88d0) then
+               fithigher = 0.47596972d0*pow4(log10mdot) + 12.61002433d0*pow3(log10mdot) &
+                         + 125.08958464d0*pow2(log10mdot) + 549.88858261d0*log10mdot + 898.29715596d0
+            else
+               fithigher = -0.0999d0*log10mdot - 3.1982d0
+            end if
+
+            M_WDlower  = 1.30d0
+            M_WDhigher = 1.35d0
+
+         else if ((m_wd > 1.35d0) .and. (m_wd <= 1.38d0)) then
+
+            ! 1.35 lower curve
+            if (log10mdot >= -7.88d0) then
+               fitlower = 0.47596972d0*pow4(log10mdot) + 12.61002433d0*pow3(log10mdot) &
+                        + 125.08958464d0*pow2(log10mdot) + 549.88858261d0*log10mdot + 898.29715596d0
+            else
+               fitlower = -0.0999d0*log10mdot - 3.1982d0
+            end if
+
+            ! 1.38 higher curve (note strict >, as in the reference)
+            if (log10mdot > -7.94d0) then
+               fithigher = 0.54437094d0*pow4(log10mdot) + 14.68324636d0*pow3(log10mdot) &
+                         + 148.24381872d0*pow2(log10mdot) + 663.22092056d0*log10mdot + 1103.57417218d0
+            else
+               fithigher = -0.1433d0*log10mdot - 4.079d0
+            end if
+
+            M_WDlower  = 1.35d0
+            M_WDhigher = 1.38d0
+
+         else
+            ! m_wd > 1.38 up to the clamped ceiling of 1.44 Msun
+
+            ! 1.38 lower curve
+            if (log10mdot > -7.94d0) then
+               fitlower = 0.54437094d0*pow4(log10mdot) + 14.68324636d0*pow3(log10mdot) &
+                        + 148.24381872d0*pow2(log10mdot) + 663.22092056d0*log10mdot + 1103.57417218d0
+            else
+               fitlower = -0.1433d0*log10mdot - 4.079d0
+            end if
+
+            ! 1.44 higher curve: M_Heig_chand = log10(8e-7)
+            fithigher = log10_cr(8d-7)
+
+            M_WDlower  = 1.38d0
+            M_WDhigher = 1.44d0
+
+         end if
+
+         ! Linear interp of log10(Delta_M_ig) in mass, then back to linear space.
+         dmHedet = exp10_cr(fitlower + (m_wd - M_WDlower) * (fithigher - fitlower) / (M_WDhigher - M_WDlower))
+
+      end subroutine my_Hedetonation
+
+!**************************************************!
+
+      subroutine my_dm_ig(binary_id, dm_ig, ierr)
+      !He ignition mass [Msun] for the unsteady-burning regime, switching
+      !between the strong-flash (nova) fit and the low-flash/detonation fit
+      !at the strong-flash/detonation boundary used by binary_c (KEMP_NOVAE,
+      !src/binary_star_functions/He_accretion_regime_WD.c, SFDt_log10mdot,
+      !"boundary curves from Piersanti et al. 2014"):
+      !   log10(Mdot_det) = -8.313 + 1.018*M_WD   [Msun/yr]
+      !As in binary_c's limit_accretion_rates.c, Hedet_dMHe replaces
+      !Henova_dMHe below this line. The two fits agree to <~0.01 dex on this
+      !boundary for 0.6 <= M_WD <= 1.38, and each extrapolates unphysically
+      !on the other side (my_dmHe -> up to ~1e100+ Msun at low Mdot), so the
+      !switch must be on Mdot, never min/max.
+         integer, intent(in) :: binary_id
+         real(dp), intent(out) :: dm_ig
+         integer, intent(out) :: ierr
+         type (binary_info), pointer :: b
+         real(dp) :: m_wd, log10mdot
+
+         ierr  = 0
+         dm_ig = 0d0
+
+         call binary_ptr(binary_id, b, ierr)
+         if (ierr /= 0) then
+            write(*,*) 'failed in binary_ptr in my_dm_ig'
+            return
+         end if
+
+         m_wd      = b% m(b% point_mass_i) / Msun
+         log10mdot = log10_cr(max(10d0**nova_log10mdot_min, abs(b% mtransfer_rate) * secyer / Msun))
+
+         if (log10mdot < -8.313d0 + 1.018d0*m_wd) then
+            call my_Hedetonation(binary_id, dm_ig, ierr)
+         else
+            call my_dmHe(binary_id, dm_ig, ierr)
+         end if
+
+      end subroutine my_dm_ig
 
 !**************************************************!
 
       subroutine my_t_recurrence(binary_id, t_rec, ierr)
       !calculates the recurrence time between novae given ignition mass and mdot
+      !note that this recurrence time is only calculated when the accreted mass
+      !is greater than the ignition mass at the start of the MESA step. If the step
+      !is much longer than the recurrence time, then one canot get information about
+      !the other nova which would've occured during that timestep.
          integer, intent(in) :: binary_id
          real(dp), intent(out) :: t_rec
          integer, intent(out) :: ierr
-         real(dp) :: dMH, mdot_msun_yr
+         real(dp) :: dmHe, mdot_msun_yr
          type (binary_info), pointer :: b
 
          ierr  = 0
@@ -1377,11 +1861,11 @@
          if (b% mtransfer_rate == 0d0) return
 
          mdot_msun_yr = abs(b% mtransfer_rate) * secyer / Msun
-         call my_dMH(binary_id, dMH, ierr)
+         call my_dm_ig(binary_id, dmHe, ierr)
          if (ierr /= 0) return
 
          ! Recurrence time: tau_rec = Delta_Mig / Mdot.
-         t_rec = dMH / mdot_msun_yr
+         t_rec = dmHe / mdot_msun_yr
 
       end subroutine my_t_recurrence
 
@@ -1389,8 +1873,8 @@
 
       subroutine my_nova_flag(binary_id, nova_flag, ierr)
          ! nova_flag = 1 if system is in nova regime (Mdot below stable-burning threshold), else 0.
-         ! Threshold (Wang+2018 eq. 2):
-         ! Mdot_st = 2.93e-7 * (-Mwd^3 + 4.41*Mwd^2 - 3.38*Mwd + 0.84)  [Msun/yr]
+         ! Threshold (Wang+2018 eq. 4):
+         ! Mdot_st = 1.46 * 10^-6 (-Mwd^3 + 3.45*Mwd^2 - 2.60*Mwd + 0.85)  [Msun/yr]
          ! Nova occurs when accretion rate falls below Mdot_st.
          integer, intent(in) :: binary_id
          real(dp), intent(out) :: nova_flag
@@ -1410,9 +1894,9 @@
          m_wd  = b% m(b% point_mass_i) / Msun
          mdot  = abs(b% mtransfer_rate) * secyer / Msun
 
-         ! Nova regime requires Mdot < Mdot_st; above this threshold steady H-burning retains all mass with eta_H = 1.
-         mdot_st = 2.93d-7 * (-pow3(m_wd) + 4.41d0*pow2(m_wd) - 3.38d0*m_wd + 0.84d0)
-         !Here we apply a lower limit of mdot at 1e-18
+         ! Nova regime requires Mdot < Mdot_st; above this threshold steady He-burning retains all mass with eta_H = 1.
+         !stability bound from Bo Wang 2018 Res. Astron. Astrophys. 18 049
+         mdot_st = 1.46d-6 * (-pow3(m_wd) + 3.45d0*pow2(m_wd) - 2.60d0*m_wd + 0.85d0)
          if (mdot_st > 0d0 .and. mdot > 10d0**nova_log10mdot_min .and. mdot < mdot_st) nova_flag = 1d0
 
       end subroutine my_nova_flag
@@ -2438,71 +2922,19 @@
          vals(26)  = b% s_donor% xtra9
          names(27) = 'ejected_fraction'
 
-!1. eta_retention
-  ! Source: xtra3
-  ! H retention efficiency (eta) from the Wang+2018 fit. Only updated
-  ! when nova_flag = 1 and nova_validity = 1; otherwise keeps last value.
-
-!2. m_ignition
- !  Source: xtra4
-  ! Ignition mass Delta_M_ig [Msun] from my_dMH (Kemp et al. 2021 fit).
-   !Only updated when nova_flag = 1 and nova_validity = 1.
-
-!3. t_recurrence
- !  Source: computed live each step
-  ! Nova recurrence time tau_rec = Delta_M_ig / Mdot [yr].
-   !Only logged on steps where beta > 0, else 0.
-
-!4. nova_validity
- !  Source: computed live each step
-  ! 1 if WD mass and Mdot fall inside the nova regime
-   !(0.2-1.44 Msun, log10(Mdot) >= -18), else 0.
-
-!5. mass_transfer_beta
- !  Source: b% mass_transfer_beta
-  ! Non-conservative mass-transfer fraction actually used this step,
-   != 1 - eta. 0 in stable burning or when accumulation hasn't yet
-   !reached the ignition mass.
-
-!6. nova_flag
- !  Source: computed live (my_nova_flag)
-  ! 1 if the system is in the nova regime (Mdot < Mdot_st) this step,
-   !else 0.
-
-!7. n_novae
- !  Source: xtra7
-  ! Number of novae this step, dt / tau_rec (only nonzero when beta > 0
-   !this step).
-
-!8. ratio_trec_dt
- !  Source: computed live each step
-  ! tau_rec / dt - diagnostic for step-size adequacy (only nonzero
-   !when beta > 0 this step).
-
-!9. nova_mass_lost
- !  Source: xtra5
-  ! Mass ejected this step [Msun] = beta * |Mdot| * dt.
-
-!10. wd_mass_ref_nova
- !   Source: xtra6
-  !  WD mass [Msun] at the last nova reset - bookkeeping reference used
-   ! to gate when the next nova fires (m_accreted = m_wd - xtra6). Not
-    ! fed into the ignition-mass/efficiency physics itself, which uses
-    ! the live b% m(b% point_mass_i) instead.
-
-!11. ejected_mass_cum
- !   Source: xtra8
-  !  Cumulative nova-ejected mass [Msun] over the whole run.
-
-!12. accreted_mass_cum
- !   Source: xtra9
-  !  Cumulative mass retained/accreted by the WD [Msun] over the whole
-   ! run.
-
-!13. ejected_fraction
- !   Source: computed live each step
-  !  100 * ejected_mass_cum / (ejected_mass_cum + accreted_mass_cum) -
-   ! running percentage of transferred mass lost to novae.
+! 15 eta_retention     xtra3  He retention efficiency (Wu+2017); holds last value outside nova regime
+! 16 m_ignition        xtra4  ignition mass dm_ig [Msun] from my_dm_ig; holds last value outside nova regime
+! 17 t_recurrence      live   dm_ig / Mdot [yr]; 0 unless nova_flag = 1 and beta > 0
+! 18 nova_validity     live   1 if WD mass and Mdot are inside the trusted fit range, else 0
+! 19 mass_transfer_beta       beta = 1 - eta in nova regime, 0 otherwise
+! 20 nova_flag         live   1 if Mdot < Mdot_st (Wang+2018), else 0
+! 21 n_novae           xtra7  dt / t_rec, novae this step
+! 22 ratio_trec_dt     live   t_rec / dt (step-size diagnostic)
+! 23 nova_mass_lost    xtra5  beta * |Mdot| * dt [Msun]
+! 24 wd_mass_ref_nova  xtra6  WD mass [Msun] at last beta > 0 step (unused by physics)
+! 25 ejected_mass_cum  xtra8  cumulative ejected mass [Msun]
+! 26 accreted_mass_cum xtra9  cumulative retained mass [Msun]
+! 27 ejected_fraction  live   100 * ejected / (ejected + accreted)
 
 !******************************************************************!
 
@@ -2523,9 +2955,8 @@
             call my_nova_flag(binary_id, nova_flag, ierr)
             if (ierr /= 0) return
             vals(20) = nova_flag
-            ! Only log t_recurrence (and the derived ratio) on the step the
-            ! nova actually fires (mass_transfer_beta > 0, i.e. ignition
-            ! threshold dMH reached)
+            ! Only log t_recurrence (and the derived ratio) on nova-active
+            ! steps (mass_transfer_beta > 0)
             if (nova_flag == 1d0 .and. b% mass_transfer_beta > 0d0) then
                call my_t_recurrence(binary_id, t_rec, ierr)
                if (ierr /= 0) return
@@ -2621,18 +3052,12 @@
          type (binary_info), pointer :: b
          integer, intent(in) :: binary_id
          integer, intent(out) :: ierr
-         real(dp) :: nova_flag, eta, dMH, m_wd, m_accreted, m_total
+         real(dp) :: nova_flag, eta, m_wd
          real(dp) :: t_recurr, mdot_msun_yr
 
          extras_binary_start_step = keep_going
          call binary_ptr(binary_id, b, ierr)
          if (ierr /= 0) return
-
-
-!add timsetep regime (average when it is greater)
-!in the case when the timestep is smaller than the recurrence time.
-!see sawtooth? envelope builds over timsteps and then occurs but it might have over accreted.
-
 
          mdot_msun_yr = abs(b% mtransfer_rate) * secyer / Msun
 
@@ -2649,37 +3074,20 @@
                if (ierr /= 0) return
             endif
 
-            ! Historical accumulation on WD since last nova [grams]
-            m_wd       = b% m(b% point_mass_i)
-            m_accreted = m_wd - b% s_donor% xtra6
-            write(*,*) 'm_accreted', m_accreted
+            m_wd = b% m(b% point_mass_i)
+
             if (nova_flag == 1d0) then
-               call my_dMH(binary_id, dMH, ierr)
-               if (ierr /= 0) return
-
-               ! Gate uses historical + expected accretion this step: novae fire whenever
-               ! the WD will have accumulated >= dMH by end of this timestep, even if
-               ! m_accreted = 0 at the start (as occurs on the step immediately after a nova).
-               ! This prevents spurious zero-beta steps when dt >> tau_rec.
-               m_total = m_accreted + abs(b% mtransfer_rate) * b% s_donor% dt
-
-               ! Nova regime: WD mass in [0.2, 1.44] Msun and log10(Mdot) >= -18
-               ! (same range as the 'nova_validity' history column). Note the
-               ! Kemp+2021 dMH/eta fits are only calibrated for [0.6, 1.35] Msun
-               ! and log10(Mdot) >= -11, so my_dMH/my_eta_accretion extrapolate
-               ! outside that. Outside the nova regime fall back to fully
-               ! conservative mass transfer.
-               if (m_total >= dMH * Msun .and. &
-               !negative 18 from kemp valid?
-                     in_nova_regime(m_wd/Msun, log10_cr(mdot_msun_yr))) then
+               ! SIMPLE-BETA VERSION: time-averaged nova retention on every
+               ! nova-regime step, beta = 1 - eta. No ignition-mass gate (the
+               ! gated version only set beta when the mass accreted since the
+               ! last nova reached dmHe, which leaves the WD almost fully
+               ! conservative whenever dt < t_rec). 
+               if (in_nova_regime(m_wd/Msun, log10_cr(mdot_msun_yr))) then
                   call my_eta_accretion(binary_id, eta, ierr)
                   if (ierr /= 0) return
-                  ! Continuous-time average: ejected fraction = 1 - eta.
                   b% mass_transfer_beta = 1d0 - eta
-                  ! xtra6 reset is deferred to finish_step so beta > 0 is visible in history
                else
-                  ! Neither historical nor expected accretion reaches dMH, or
-                  ! outside the nova regime; fully conservative.
+                  ! Outside the trusted fit range: fully conservative.
                   b% mass_transfer_beta = 0d0
                end if
             else
@@ -3122,14 +3530,7 @@
             call my_nova_flag(binary_id, nova_flag, ierr)
             if (ierr /= 0) return
 
-
-!if a nova has occured within this timestep do a correction (or do no correction if it didnt occur)
-!look at recurrence time and how much has elapsed since last timestep.
-
-
-            ! Same nova-regime check used for the 'nova_validity' history column
-            ! (WD mass in [0.2, 1.44] Msun and log10(Mdot) >= -18): outside it,
-            ! treat the step as invalid nova physics.
+            ! Same in_nova_regime check used for the 'nova_validity' history column.
             mdot_msun_yr = abs(b% mtransfer_rate) * secyer / Msun
             m_wd_msun    = b% m(b% point_mass_i) / Msun
             log10mdot    = log10_cr(mdot_msun_yr)
@@ -3142,7 +3543,7 @@
             if (nova_flag == 1d0 .and. nova_validity == 1d0) then
                call my_eta_accretion(binary_id, etaH, ierr)
                if (ierr /= 0) return
-               call my_dMH(binary_id, m_ig, ierr)
+               call my_dm_ig(binary_id, m_ig, ierr)
                if (ierr /= 0) return
                b% s_donor% xtra3 = etaH
                b% s_donor% xtra4 = m_ig
@@ -3187,6 +3588,22 @@
             b% s_donor% xtra5 = 0d0
             b% s_donor% xtra7 = 0d0
          end if
+!************************************TERMNATION CONDITONS************************************        
+         ! Stop once the WD reaches the Chandrasekhar mass (1.38 Msun, as
+         ! in Kemp+2021). Checked after the nova bookkeeping so the final
+         ! history row is consistent.
+
+         !Here we need to add a termination condition for Sub-Chandraskehar detonation
+         if (b% point_mass_i /= 0) then
+            if (b% m(b% point_mass_i) >= 1.38d0 * Msun) then
+               extras_binary_finish_step = terminate
+               write(*,'(g0)') 'termination code: WD reached Chandrasekhar mass (1.38 Msun)'
+               return
+            end if
+         end if
+
+
+
 !***************************************************************************!
       end function extras_binary_finish_step
 
