@@ -10,4 +10,6 @@
      ! if true, avoid implementing magnetic braking for this star at RLO (do_jdot_mb stays .false.). in run_binary_extras
      ! We have the option this not implement it for He_Stars in the CO-He_star grid
      x_logical_ctrl(6) = .true.
+
+     gamma_center_limit = 1d99   ! effectively off
 / ! end of controls namelist
